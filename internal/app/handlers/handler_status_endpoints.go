@@ -15,6 +15,7 @@ import (
 )
 
 type EndpointSummary struct {
+	CircuitBreaker     *domain.CircuitBreakerState `json:"circuit_breaker,omitempty"`
 	Name               string                      `json:"name"`
 	Type               string                      `json:"type"`
 	Status             string                      `json:"status"`
@@ -29,7 +30,6 @@ type EndpointSummary struct {
 	RequestCount       int64                       `json:"request_count"`
 	SuccessRatePercent float64                     `json:"success_rate_percent,omitempty"`
 	Degraded           bool                        `json:"degraded"`
-	CircuitBreaker     *domain.CircuitBreakerState `json:"circuit_breaker,omitempty"`
 }
 
 type EndpointStatusResponse struct {

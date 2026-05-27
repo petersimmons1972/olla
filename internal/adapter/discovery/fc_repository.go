@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,10 +41,10 @@ type fcRegistryEntry struct {
 // that endpoints removed from the FC registry are promptly evicted from Olla's rotation,
 // meeting the <30s convergence acceptance criterion for petersimmons1972/instinct#12.
 type FCDiscoveryPoller struct {
-	repo        *StaticEndpointRepository
-	registryURL string
 	logger      logger.StyledLogger
+	repo        *StaticEndpointRepository
 	client      *http.Client
+	registryURL string
 }
 
 // NewFCDiscoveryPoller creates a poller that syncs Olla endpoints from FC /registry.
@@ -140,7 +142,7 @@ func fcEntriesToEndpointConfigs(entries []fcRegistryEntry) []config.EndpointConf
 			}
 			cbTimeout, _ := time.ParseDuration(model.CircuitBreakerTimeout)
 			cfg := config.EndpointConfig{
-				URL:                     fmt.Sprintf("http://%s:%d", entry.Host, model.Port),
+				URL:                     "http://" + net.JoinHostPort(entry.Host, strconv.Itoa(model.Port)),
 				Name:                    fmt.Sprintf("%s-%s", entry.Host, model.Name),
 				Type:                    fcEndpointType(model),
 				Priority:                &priority,

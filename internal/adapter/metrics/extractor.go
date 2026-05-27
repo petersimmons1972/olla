@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -64,6 +65,10 @@ func (e *Extractor) ValidateProfile(profile domain.InferenceProfile) error {
 		if path == "" {
 			continue
 		}
+		if err := validateJSONPath(path); err != nil {
+			return fmt.Errorf("profile %s: invalid JSONPath for field %s: %s - %w",
+				profile.GetName(), field, path, err)
+		}
 
 		// Convert JSONPath to gjson syntax if needed
 		gjsonPath := convertToGjsonPath(path)
@@ -112,6 +117,84 @@ func (e *Extractor) ValidateProfile(profile domain.InferenceProfile) error {
 		"calculations", len(metricsConfig.Calculations))
 
 	return nil
+}
+
+func validateJSONPath(path string) error {
+	if path == "" || path == "$" {
+		return nil
+	}
+
+	s := strings.TrimSpace(path)
+	if s != path {
+		return errors.New("path contains leading or trailing whitespace")
+	}
+	if strings.HasPrefix(s, "$") {
+		s = s[1:]
+	}
+	if s == "" {
+		return nil
+	}
+
+	for len(s) > 0 {
+		switch {
+		case s[0] == '.':
+			if len(s) == 1 {
+				return errors.New("dot must be followed by a field name")
+			}
+			s = s[1:]
+			n := jsonPathFieldLen(s)
+			if n == 0 {
+				return errors.New("dot must be followed by a field name")
+			}
+			s = s[n:]
+		case s[0] == '[':
+			end := strings.IndexByte(s, ']')
+			if end < 0 {
+				return errors.New("missing closing bracket")
+			}
+			token := s[1:end]
+			if token == "" {
+				return errors.New("empty bracket selector")
+			}
+			if _, ok := parseJSONPathBracketToken(token); !ok {
+				return errors.New("invalid bracket selector")
+			}
+			s = s[end+1:]
+		default:
+			n := jsonPathFieldLen(s)
+			if n == 0 {
+				return fmt.Errorf("unexpected character %q", s[0])
+			}
+			s = s[n:]
+		}
+	}
+
+	return nil
+}
+
+func jsonPathFieldLen(s string) int {
+	for i, r := range s {
+		if (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '_' || r == '-' {
+			continue
+		}
+		return i
+	}
+	return len(s)
+}
+
+func parseJSONPathBracketToken(token string) (string, bool) {
+	if len(token) >= 2 && token[0] == '\'' && token[len(token)-1] == '\'' {
+		return token[1 : len(token)-1], len(token) > 2
+	}
+	for _, r := range token {
+		if r < '0' || r > '9' {
+			return "", false
+		}
+	}
+	return token, true
 }
 
 // ExtractMetrics extracts metrics from response data and headers.

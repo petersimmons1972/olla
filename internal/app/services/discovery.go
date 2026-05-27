@@ -65,7 +65,9 @@ func (s *DiscoveryService) Name() string {
 	return "discovery"
 }
 
-// Start initialises discovery components
+// Start initialises discovery components.
+//
+//nolint:gocognit // Startup wiring spans registry, endpoint discovery, health checking, and optional model discovery.
 func (s *DiscoveryService) Start(ctx context.Context) error {
 	s.logger.Info("Initialising discovery service")
 
@@ -109,7 +111,7 @@ func (s *DiscoveryService) Start(ctx context.Context) error {
 		// Flight Controller dynamic discovery: poll FC /registry on a fixed interval
 		// and atomically replace the endpoint set (petersimmons1972/instinct#12).
 		if s.config.FC.RegistryURL == "" {
-			return fmt.Errorf("discovery.fc.registry_url is required when discovery.type is \"fc\"")
+			return errors.New("discovery.fc.registry_url is required when discovery.type is \"fc\"")
 		}
 		pollInterval := s.config.FC.PollInterval
 		if pollInterval <= 0 {

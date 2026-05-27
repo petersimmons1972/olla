@@ -23,9 +23,9 @@ type HTTPClient interface {
 // The endpoints xsync.Map will accumulate stale entries for removed/changed endpoints without TTL
 type CircuitBreaker struct {
 	endpoints        *xsync.Map[string, *circuitState]
+	endpointConfigs  *xsync.Map[string, CircuitBreakerConfig]
 	failureThreshold int
 	timeout          time.Duration
-	endpointConfigs  *xsync.Map[string, CircuitBreakerConfig]
 }
 
 type circuitState struct {

@@ -65,6 +65,15 @@ jobs:
       - name: Run tests
         run: make test-race
 
+      - name: Run coverage tests
+        run: make test-cover
+
+      - name: Run non-short reliability tests
+        run: make test-reliability
+
+      - name: Verify CI validation wiring
+        run: bash scripts/verify-ci-validation.sh
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6
         with:

@@ -11,7 +11,9 @@ This guide covers monitoring and observability for Olla deployments.
 > :memo: **Default Monitoring Configuration**
 > ```yaml
 > # Built-in endpoints (always enabled)
-> # /internal/health - Basic health check
+> # /internal/health - Process liveness check
+> # /internal/live - Process liveness check alias
+> # /internal/ready - Readiness check for routable discovered models
 > # /internal/status - Detailed status
 > # /internal/status/endpoints - Endpoint details
 > # /internal/stats/models - Model statistics
@@ -41,9 +43,9 @@ Effective monitoring helps you:
 
 ## Built-in Monitoring
 
-### Health Endpoint
+### Health Endpoints
 
-Basic health check:
+Process liveness check:
 
 ```bash
 curl http://localhost:40114/internal/health
@@ -52,16 +54,23 @@ curl http://localhost:40114/internal/health
 Response:
 ```json
 {
-  "status": "healthy",
-  "endpoints_healthy": 3,
-  "endpoints_total": 3
+  "status": "healthy"
 }
 ```
+
+Readiness check:
+
+```bash
+curl http://localhost:40114/internal/ready
+```
+
+The readiness endpoint returns `503 Service Unavailable` until Olla has at least one routable endpoint with discovered models.
 
 Use for:
 
 - Load balancer health checks
 - Kubernetes liveness probes
+- Kubernetes readiness probes
 - Basic availability monitoring
 
 ### Status Endpoint

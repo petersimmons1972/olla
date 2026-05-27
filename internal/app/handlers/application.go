@@ -15,6 +15,7 @@ import (
 	"github.com/thushan/olla/internal/adapter/translator/anthropic"
 	"github.com/thushan/olla/internal/app/middleware"
 	"github.com/thushan/olla/internal/config"
+	"github.com/thushan/olla/internal/core/constants"
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/core/ports"
 	"github.com/thushan/olla/internal/logger"
@@ -38,13 +39,15 @@ func (s *SecurityAdapters) CreateChainMiddleware() func(http.Handler) http.Handl
 			if s.securityChain != nil {
 				// Create security request from HTTP request
 				secReq := ports.SecurityRequest{
-					ClientID:      r.RemoteAddr, // This would normally be extracted better
-					Endpoint:      r.URL.Path,
-					Method:        r.Method,
-					BodySize:      r.ContentLength,
-					HeaderSize:    0, // Would need to calculate
-					Headers:       r.Header,
-					IsHealthCheck: r.URL.Path == "/internal/health",
+					ClientID:   r.RemoteAddr, // This would normally be extracted better
+					Endpoint:   r.URL.Path,
+					Method:     r.Method,
+					BodySize:   r.ContentLength,
+					HeaderSize: 0, // Would need to calculate
+					Headers:    r.Header,
+					IsHealthCheck: r.URL.Path == constants.DefaultHealthCheckEndpoint ||
+						r.URL.Path == constants.DefaultLivenessEndpoint ||
+						r.URL.Path == constants.DefaultReadinessEndpoint,
 				}
 
 				result, err := s.securityChain.Validate(r.Context(), secReq)

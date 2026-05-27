@@ -5,18 +5,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/thushan/olla/internal/config"
+	"github.com/thushan/olla/internal/core/constants"
 	"github.com/thushan/olla/internal/logger"
 )
 
 // fcModelSpec mirrors the Flight Controller ModelSpec fields we care about for
 // building Olla endpoint configs. Only Name and Port are required for routing.
 type fcModelSpec struct {
-	Name      string `json:"name"`
-	Port      int    `json:"port"`
-	Framework string `json:"framework"`
+	Name                    string `json:"name"`
+	Framework               string `json:"framework"`
+	EndpointType            string `json:"endpointType,omitempty"`
+	HealthCheckURL          string `json:"healthCheckURL,omitempty"`
+	ModelURL                string `json:"modelURL,omitempty"`
+	CircuitBreakerTimeout   string `json:"circuitBreakerTimeout,omitempty"`
+	Port                    int    `json:"port"`
+	Priority                int    `json:"priority,omitempty"`
+	CircuitBreakerThreshold int    `json:"circuitBreakerThreshold,omitempty"`
 }
 
 // fcRegistryEntry mirrors the Flight Controller RegistryEntry type returned by
@@ -31,10 +39,10 @@ type fcRegistryEntry struct {
 // that endpoints removed from the FC registry are promptly evicted from Olla's rotation,
 // meeting the <30s convergence acceptance criterion for petersimmons1972/instinct#12.
 type FCDiscoveryPoller struct {
-	repo       *StaticEndpointRepository
+	repo        *StaticEndpointRepository
 	registryURL string
-	logger     logger.StyledLogger
-	client     *http.Client
+	logger      logger.StyledLogger
+	client      *http.Client
 }
 
 // NewFCDiscoveryPoller creates a poller that syncs Olla endpoints from FC /registry.
@@ -114,8 +122,9 @@ func (p *FCDiscoveryPoller) RunLoop(ctx context.Context, interval time.Duration)
 
 // fcEntriesToEndpointConfigs converts FC registry entries into Olla EndpointConfig slices.
 // Each (host, model) pair becomes one endpoint at http://<host>:<port>.
-// Type is always "openai" because all FC-managed containers serve the OpenAI-compatible API.
-// Priority defaults to 100 (standard Olla default).
+// Type and optional endpoint tuning are preserved from FC when present. Framework
+// defaults keep older FC registries useful while allowing richer metadata to make
+// FC and static discovery produce equivalent routing behaviour.
 func fcEntriesToEndpointConfigs(entries []fcRegistryEntry) []config.EndpointConfig {
 	defaultPriority := 100
 	var configs []config.EndpointConfig
@@ -125,14 +134,42 @@ func fcEntriesToEndpointConfigs(entries []fcRegistryEntry) []config.EndpointConf
 			if model.Port == 0 {
 				continue // skip models without a port (incomplete CRD)
 			}
+			priority := defaultPriority
+			if model.Priority != 0 {
+				priority = model.Priority
+			}
+			cbTimeout, _ := time.ParseDuration(model.CircuitBreakerTimeout)
 			cfg := config.EndpointConfig{
-				URL:      fmt.Sprintf("http://%s:%d", entry.Host, model.Port),
-				Name:     fmt.Sprintf("%s-%s", entry.Host, model.Name),
-				Type:     "openai",
-				Priority: &defaultPriority,
+				URL:                     fmt.Sprintf("http://%s:%d", entry.Host, model.Port),
+				Name:                    fmt.Sprintf("%s-%s", entry.Host, model.Name),
+				Type:                    fcEndpointType(model),
+				Priority:                &priority,
+				HealthCheckURL:          model.HealthCheckURL,
+				ModelURL:                model.ModelURL,
+				CircuitBreakerTimeout:   cbTimeout,
+				CircuitBreakerThreshold: model.CircuitBreakerThreshold,
 			}
 			configs = append(configs, cfg)
 		}
 	}
 	return configs
+}
+
+func fcEndpointType(model fcModelSpec) string {
+	if model.EndpointType != "" {
+		return model.EndpointType
+	}
+
+	switch strings.ToLower(model.Framework) {
+	case constants.ProviderTypeVLLM:
+		return constants.ProviderTypeVLLM
+	case constants.ProviderTypeOllama:
+		return constants.ProviderTypeOllama
+	case constants.ProviderTypeLlamaCpp, "llama-cpp", "llama_cpp":
+		return constants.ProviderTypeLlamaCpp
+	case "infinity":
+		return constants.ProviderTypeOpenAI
+	default:
+		return constants.ProviderTypeOpenAI
+	}
 }

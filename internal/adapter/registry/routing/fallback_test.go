@@ -143,6 +143,42 @@ func TestDiscoveryStrategy_FallbackBehavior(t *testing.T) {
 		assert.Equal(t, healthyEndpoints, result)
 		assert.Equal(t, "fallback", string(decision.Action))
 	})
+
+	t.Run("rejects without panic when refresh is enabled but discovery service is nil", func(t *testing.T) {
+		strategy := &DiscoveryStrategy{
+			discovery: nil,
+			options: config.ModelRoutingStrategyOptions{
+				FallbackBehavior:       constants.FallbackBehaviorNone,
+				DiscoveryRefreshOnMiss: true,
+			},
+			logger:         testLogger,
+			strictFallback: NewStrictStrategy(testLogger),
+		}
+
+		result, decision, err := strategy.GetRoutableEndpoints(ctx, "test-model", healthyEndpoints, modelEndpoints)
+
+		assert.Nil(t, result)
+		assert.Equal(t, "rejected", string(decision.Action))
+		assert.Error(t, err)
+	})
+
+	t.Run("falls back without panic when discovery service is nil and fallback is all", func(t *testing.T) {
+		strategy := &DiscoveryStrategy{
+			discovery: nil,
+			options: config.ModelRoutingStrategyOptions{
+				FallbackBehavior:       constants.FallbackBehaviorAll,
+				DiscoveryRefreshOnMiss: true,
+			},
+			logger:         testLogger,
+			strictFallback: NewStrictStrategy(testLogger),
+		}
+
+		result, decision, err := strategy.GetRoutableEndpoints(ctx, "test-model", healthyEndpoints, modelEndpoints)
+
+		assert.NoError(t, err)
+		assert.Equal(t, healthyEndpoints, result)
+		assert.Equal(t, "fallback", string(decision.Action))
+	})
 }
 
 type mockDiscoveryForTest struct {

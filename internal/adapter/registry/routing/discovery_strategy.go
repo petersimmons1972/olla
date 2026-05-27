@@ -51,6 +51,9 @@ func (s *DiscoveryStrategy) GetRoutableEndpoints(
 
 	var currentlyRoutable []*domain.Endpoint
 	for _, endpoint := range healthyEndpoints {
+		if endpoint == nil {
+			continue
+		}
 		if modelEndpointMap[endpoint.URLString] {
 			currentlyRoutable = append(currentlyRoutable, endpoint)
 		}
@@ -86,6 +89,31 @@ func (s *DiscoveryStrategy) GetRoutableEndpoints(
 				modelEndpoints,
 				fmt.Errorf("model %s not available and discovery refresh disabled", modelName),
 			)
+	}
+	if s.discovery == nil {
+		s.logger.Error("Discovery refresh requested but discovery service is not configured",
+			"model", modelName)
+		switch s.options.FallbackBehavior {
+		case constants.FallbackBehaviorNone, constants.FallbackBehaviorCompatibleOnly:
+			return nil, ports.NewRoutingDecision(
+					s.Name(),
+					ports.RoutingActionRejected,
+					constants.RoutingReasonDiscoveryFailedNoFallback,
+				), domain.NewModelRoutingError(
+					modelName,
+					s.Name(),
+					"rejected",
+					len(healthyEndpoints),
+					modelEndpoints,
+					fmt.Errorf("discovery refresh requested but discovery service is not configured"),
+				)
+		default:
+			return healthyEndpoints, ports.NewRoutingDecision(
+				s.Name(),
+				ports.RoutingActionFallback,
+				constants.RoutingReasonDiscoveryFailedAllFallback,
+			), nil
+		}
 	}
 
 	discoveryTimeout := s.options.DiscoveryTimeout

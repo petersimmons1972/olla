@@ -197,6 +197,10 @@ func IsConnectionError(err error) bool {
 		return true
 	}
 
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
 	var syscallErr syscall.Errno
 	if errors.As(err, &syscallErr) {
 		switch syscallErr {

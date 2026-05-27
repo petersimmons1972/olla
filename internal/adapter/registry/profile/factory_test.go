@@ -41,6 +41,17 @@ func TestNewFactory(t *testing.T) {
 	}
 }
 
+func TestNewFactoryWithDefaultsFindsRepositoryProfiles(t *testing.T) {
+	factory, err := NewFactoryWithDefaults()
+	if err != nil {
+		t.Fatalf("NewFactoryWithDefaults() error = %v", err)
+	}
+
+	if !factory.ValidateProfileType(domain.ProfileVLLM) {
+		t.Fatalf("NewFactoryWithDefaults() should load repository profiles including %q; got %v", domain.ProfileVLLM, factory.GetAvailableProfiles())
+	}
+}
+
 func TestGetProfile(t *testing.T) {
 	factory := testFactory(t)
 

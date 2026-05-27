@@ -30,6 +30,8 @@ func (a *Application) registerRoutes() {
 	// Internal health and monitoring endpoints come first - they're critical
 	// for operations and shouldn't depend on any provider configuration
 	a.routeRegistry.RegisterWithMethod(constants.DefaultHealthCheckEndpoint, a.healthHandler, "Health check endpoint", "GET")
+	a.routeRegistry.RegisterWithMethod(constants.DefaultLivenessEndpoint, a.healthHandler, "Liveness check endpoint", "GET")
+	a.routeRegistry.RegisterWithMethod(constants.DefaultReadinessEndpoint, a.readinessHandler, "Readiness check endpoint", "GET")
 	a.routeRegistry.RegisterWithMethod("/internal/status", a.statusHandler, "Endpoint status", "GET")
 	a.routeRegistry.RegisterWithMethod("/internal/status/endpoints", a.endpointsStatusHandler, "Endpoints status", "GET")
 	a.routeRegistry.RegisterWithMethod("/internal/status/models", a.modelsStatusHandler, "Models status", "GET")

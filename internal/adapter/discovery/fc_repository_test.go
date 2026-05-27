@@ -15,13 +15,20 @@ import (
 
 // FCRegistryEntry mirrors the Flight Controller RegistryEntry type.
 type FCRegistryEntry struct {
-	Host    string        `json:"host"`
-	Models  []FCModelSpec `json:"models"`
+	Host   string        `json:"host"`
+	Models []FCModelSpec `json:"models"`
 }
 
 type FCModelSpec struct {
-	Name string `json:"name"`
-	Port int    `json:"port"`
+	Name                    string `json:"name"`
+	Framework               string `json:"framework,omitempty"`
+	EndpointType            string `json:"endpointType,omitempty"`
+	HealthCheckURL          string `json:"healthCheckURL,omitempty"`
+	ModelURL                string `json:"modelURL,omitempty"`
+	CircuitBreakerTimeout   string `json:"circuitBreakerTimeout,omitempty"`
+	Port                    int    `json:"port"`
+	Priority                int    `json:"priority,omitempty"`
+	CircuitBreakerThreshold int    `json:"circuitBreakerThreshold,omitempty"`
 }
 
 func newTestLogger() logger.StyledLogger {
@@ -198,5 +205,74 @@ func TestFCEndpointRepository_PollFailOpenOnFCUnavailable(t *testing.T) {
 	all, _ := repo.GetAll(ctx)
 	if len(all) != 1 {
 		t.Errorf("fail-open: expected original 1 endpoint preserved, got %d", len(all))
+	}
+}
+
+func TestFCEndpointRepository_PollPreservesFleetEndpointMetadata(t *testing.T) {
+	entries := []FCRegistryEntry{
+		{
+			Host: "precision.petersimmons.com",
+			Models: []FCModelSpec{
+				{
+					Name:                    "qwen3-coder-30b",
+					Framework:               "vllm",
+					EndpointType:            "vllm",
+					Port:                    8000,
+					Priority:                75,
+					HealthCheckURL:          "/health",
+					ModelURL:                "/v1/models",
+					CircuitBreakerTimeout:   "2000s",
+					CircuitBreakerThreshold: 10,
+				},
+			},
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	repo := discovery.NewStaticEndpointRepository()
+	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("Poll() returned error: %v", err)
+	}
+
+	all, err := repo.GetAll(ctx)
+	if err != nil {
+		t.Fatalf("GetAll() returned error: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(all))
+	}
+
+	got := all[0]
+	if got.Type != "vllm" {
+		t.Fatalf("Type = %q, want vllm", got.Type)
+	}
+	if got.Priority != 75 {
+		t.Fatalf("Priority = %d, want 75", got.Priority)
+	}
+	if got.HealthCheckPathString != "/health" {
+		t.Fatalf("HealthCheckPathString = %q, want /health", got.HealthCheckPathString)
+	}
+	if got.ModelURLString != "http://precision.petersimmons.com:8000/v1/models" {
+		t.Fatalf("ModelURLString = %q, want v1 models URL", got.ModelURLString)
+	}
+	if got.CircuitBreakerTimeout != 2000*time.Second {
+		t.Fatalf("CircuitBreakerTimeout = %v, want 2000s", got.CircuitBreakerTimeout)
+	}
+	if got.CircuitBreakerThreshold != 10 {
+		t.Fatalf("CircuitBreakerThreshold = %d, want 10", got.CircuitBreakerThreshold)
 	}
 }

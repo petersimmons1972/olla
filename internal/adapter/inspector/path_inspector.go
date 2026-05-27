@@ -106,38 +106,33 @@ func (pi *PathInspector) Inspect(_ context.Context, _ *http.Request, profile *do
 		return nil
 	}
 
-	// First try exact match
-	if supportedProfiles, exists := pi.pathToProfiles[path]; exists {
-		for _, supportedProfile := range supportedProfiles {
-			profile.AddSupportedProfile(supportedProfile)
+	var supportedProfiles []string
+	addSupportedProfile := func(profileName string) {
+		for _, existing := range profile.SupportedBy {
+			if existing == profileName {
+				return
+			}
 		}
-		profile.SetInspectionMeta(domain.InspectionMetaPathSupport, supportedProfiles)
+		profile.AddSupportedProfile(profileName)
+		supportedProfiles = append(supportedProfiles, profileName)
+	}
+
+	// First try exact match
+	if exactProfiles, exists := pi.pathToProfiles[path]; exists {
+		for _, supportedProfile := range exactProfiles {
+			addSupportedProfile(supportedProfile)
+		}
 
 		pi.logger.Debug("Path inspection completed (exact match)",
 			"path", path,
-			"supported_profiles", supportedProfiles)
-
-		return nil
+			"supported_profiles", exactProfiles)
 	}
 
 	// If no exact match, try suffix match (for paths with prefixes)
-	var supportedProfiles []string
 	for mapPath, profiles := range pi.pathToProfiles {
 		if strings.HasSuffix(path, mapPath) {
 			for _, profileName := range profiles {
-				// Check if this profile is already in the supported list
-				alreadySupported := false
-				for _, existing := range profile.SupportedBy {
-					if existing == profileName {
-						alreadySupported = true
-						break
-					}
-				}
-
-				if !alreadySupported {
-					profile.AddSupportedProfile(profileName)
-					supportedProfiles = append(supportedProfiles, profileName)
-				}
+				addSupportedProfile(profileName)
 			}
 		}
 	}

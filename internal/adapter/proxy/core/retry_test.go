@@ -2,11 +2,16 @@ package core
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/thushan/olla/internal/adapter/proxy/common"
 	"github.com/thushan/olla/internal/core/domain"
+	"github.com/thushan/olla/internal/core/ports"
 	"github.com/thushan/olla/internal/logger"
 )
 
@@ -33,6 +38,20 @@ func (t *testDiscoveryService) UpdateEndpointStatus(ctx context.Context, endpoin
 	*t.updatedEndpoint = *endpoint
 	return nil
 }
+
+type orderedSelector struct{}
+
+func (orderedSelector) Select(ctx context.Context, endpoints []*domain.Endpoint) (*domain.Endpoint, error) {
+	if len(endpoints) == 0 {
+		return nil, errors.New("no endpoints")
+	}
+	return endpoints[0], nil
+}
+
+func (orderedSelector) Name() string { return "ordered" }
+
+func (orderedSelector) IncrementConnections(endpoint *domain.Endpoint) {}
+func (orderedSelector) DecrementConnections(endpoint *domain.Endpoint) {}
 
 func TestMarkEndpointUnhealthyBackoffProgression(t *testing.T) {
 	tests := []struct {
@@ -139,4 +158,70 @@ func TestMarkEndpointUnhealthyNilEndpoint(t *testing.T) {
 
 	// Verify no update was made
 	assert.Nil(t, testDiscovery.updatedEndpoint, "Should not update nil endpoint")
+}
+
+type timeoutNetError struct{}
+
+func (timeoutNetError) Error() string   { return "backend i/o timeout" }
+func (timeoutNetError) Timeout() bool   { return true }
+func (timeoutNetError) Temporary() bool { return true }
+
+func TestFriendlyTimeoutErrorPreservesRetryability(t *testing.T) {
+	original := timeoutNetError{}
+
+	friendly := common.MakeUserFriendlyError(original, 250*time.Millisecond, "backend", 30*time.Second)
+
+	if !IsConnectionError(friendly) {
+		t.Fatalf("friendly timeout error must remain retryable; got %v", friendly)
+	}
+
+	var netErr interface {
+		error
+		Timeout() bool
+	}
+	if !errors.As(friendly, &netErr) || !netErr.Timeout() {
+		t.Fatalf("friendly timeout error must preserve original net.Error timeout type; got %T %v", friendly, friendly)
+	}
+}
+
+func TestExecuteWithRetryRetriesFriendlyTimeoutAcrossEndpoints(t *testing.T) {
+	discovery := &testDiscoveryService{}
+	logConfig := &logger.Config{Level: "error"}
+	log, _, _ := logger.New(logConfig)
+	handler := NewRetryHandler(discovery, logger.NewPlainStyledLogger(log))
+
+	endpoints := []*domain.Endpoint{
+		{Name: "timeout", Status: domain.StatusHealthy},
+		{Name: "success", Status: domain.StatusHealthy},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/olla/test", nil)
+	resp := httptest.NewRecorder()
+	stats := &ports.RequestStats{StartTime: time.Now()}
+	var attempts []string
+
+	err := handler.ExecuteWithRetry(
+		context.Background(),
+		resp,
+		req,
+		endpoints,
+		orderedSelector{},
+		stats,
+		func(ctx context.Context, w http.ResponseWriter, r *http.Request, endpoint *domain.Endpoint, stats *ports.RequestStats) error {
+			attempts = append(attempts, endpoint.Name)
+			if endpoint.Name == "timeout" {
+				return common.MakeUserFriendlyError(timeoutNetError{}, 250*time.Millisecond, "backend", 30*time.Second)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+			return nil
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("ExecuteWithRetry returned error: %v", err)
+	}
+	assert.Equal(t, []string{"timeout", "success"}, attempts)
+	assert.Equal(t, "timeout", discovery.updatedEndpoint.Name)
+	assert.Equal(t, http.StatusOK, resp.Code)
+	assert.Equal(t, "ok", resp.Body.String())
 }

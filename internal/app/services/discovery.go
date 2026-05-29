@@ -118,7 +118,7 @@ func (s *DiscoveryService) Start(ctx context.Context) error {
 			pollInterval = 15 * time.Second
 		}
 		staticRepo := discovery.NewStaticEndpointRepository()
-		poller := discovery.NewFCDiscoveryPoller(staticRepo, s.config.FC.RegistryURL, s.logger)
+		poller := discovery.NewFCDiscoveryPollerWithRegistry(staticRepo, s.registry, s.config.FC.RegistryURL, s.logger)
 		// Run an initial blocking poll so endpoints are populated before health checks start.
 		if err := poller.Poll(ctx); err != nil {
 			return fmt.Errorf("fc-discovery: initial poll failed: %w", err)

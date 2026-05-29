@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thushan/olla/internal/adapter/discovery"
+	"github.com/thushan/olla/internal/adapter/registry"
 	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/logger"
 )
@@ -274,5 +275,141 @@ func TestFCEndpointRepository_PollPreservesFleetEndpointMetadata(t *testing.T) {
 	}
 	if got.CircuitBreakerThreshold != 10 {
 		t.Fatalf("CircuitBreakerThreshold = %d, want 10", got.CircuitBreakerThreshold)
+	}
+}
+
+// TestFCEndpointRepository_PollPreRegistersModelsInRegistry verifies that after a
+// successful poll, FC model names are pre-registered in the model registry so that
+// routing decisions can be made before model discovery completes.
+// This is the fix for petersimmons1972/olla#306 — the cold-start window where
+// compatible_endpoints=0 for BAAI/bge-m3 until the 5-minute discovery cycle runs.
+func TestFCEndpointRepository_PollPreRegistersModelsInRegistry(t *testing.T) {
+	entries := []FCRegistryEntry{
+		{
+			Host: "oblivion.petersimmons.com",
+			Models: []FCModelSpec{
+				{Name: "BAAI/bge-m3", Framework: "infinity", Port: 8003},
+				{Name: "qwen3-coder-30b", Framework: "vllm", Port: 8000},
+			},
+		},
+		{
+			Host: "precision.petersimmons.com",
+			Models: []FCModelSpec{
+				{Name: "BAAI/bge-m3", Framework: "infinity", Port: 8005},
+			},
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	repo := discovery.NewStaticEndpointRepository()
+	modelReg := registry.NewMemoryModelRegistry(newTestLogger())
+	poller := discovery.NewFCDiscoveryPollerWithRegistry(repo, modelReg, srv.URL, newTestLogger())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("Poll() returned error: %v", err)
+	}
+
+	// BAAI/bge-m3 should be findable in the registry on both endpoints
+	endpoints, err := modelReg.GetEndpointsForModel(ctx, "BAAI/bge-m3")
+	if err != nil {
+		t.Fatalf("GetEndpointsForModel() error: %v", err)
+	}
+	if len(endpoints) != 2 {
+		t.Errorf("expected 2 endpoints for BAAI/bge-m3, got %d: %v", len(endpoints), endpoints)
+	}
+
+	// qwen3-coder-30b should be findable on oblivion only
+	qwenEndpoints, err := modelReg.GetEndpointsForModel(ctx, "qwen3-coder-30b")
+	if err != nil {
+		t.Fatalf("GetEndpointsForModel(qwen3) error: %v", err)
+	}
+	if len(qwenEndpoints) != 1 {
+		t.Errorf("expected 1 endpoint for qwen3-coder-30b, got %d: %v", len(qwenEndpoints), qwenEndpoints)
+	}
+	wantURL := "http://oblivion.petersimmons.com:8000"
+	if len(qwenEndpoints) == 1 && qwenEndpoints[0] != wantURL {
+		t.Errorf("expected qwen3 endpoint %q, got %q", wantURL, qwenEndpoints[0])
+	}
+}
+
+// TestFCEndpointRepository_PollClearsStaleModelsOnRepoll verifies that when FC registry
+// shrinks (model removed or host goes offline), the stale model→endpoint mapping is
+// evicted from the model registry during the next poll.
+func TestFCEndpointRepository_PollClearsStaleModelsOnRepoll(t *testing.T) {
+	initialEntries := []FCRegistryEntry{
+		{
+			Host: "oblivion.petersimmons.com",
+			Models: []FCModelSpec{
+				{Name: "BAAI/bge-m3", Framework: "infinity", Port: 8003},
+				{Name: "qwen3-coder-30b", Framework: "vllm", Port: 8000},
+			},
+		},
+	}
+	// Second poll: qwen3-coder-30b removed from oblivion
+	reducedEntries := []FCRegistryEntry{
+		{
+			Host: "oblivion.petersimmons.com",
+			Models: []FCModelSpec{
+				{Name: "BAAI/bge-m3", Framework: "infinity", Port: 8003},
+			},
+		},
+	}
+
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		callCount++
+		if callCount == 1 {
+			json.NewEncoder(w).Encode(initialEntries)
+		} else {
+			json.NewEncoder(w).Encode(reducedEntries)
+		}
+	}))
+	defer srv.Close()
+
+	repo := discovery.NewStaticEndpointRepository()
+	modelReg := registry.NewMemoryModelRegistry(newTestLogger())
+	poller := discovery.NewFCDiscoveryPollerWithRegistry(repo, modelReg, srv.URL, newTestLogger())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// First poll: both models registered
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("first Poll() error: %v", err)
+	}
+	endpoints, _ := modelReg.GetEndpointsForModel(ctx, "qwen3-coder-30b")
+	if len(endpoints) != 1 {
+		t.Errorf("after first poll: expected 1 endpoint for qwen3, got %d", len(endpoints))
+	}
+
+	// Second poll: qwen3 removed → model registry must evict stale mapping
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("second Poll() error: %v", err)
+	}
+	endpoints, _ = modelReg.GetEndpointsForModel(ctx, "qwen3-coder-30b")
+	if len(endpoints) != 0 {
+		t.Errorf("after second poll: expected 0 endpoints for stale qwen3, got %d: %v", len(endpoints), endpoints)
+	}
+	// BAAI/bge-m3 should still be registered
+	bgeEndpoints, _ := modelReg.GetEndpointsForModel(ctx, "BAAI/bge-m3")
+	if len(bgeEndpoints) != 1 {
+		t.Errorf("after second poll: expected 1 endpoint for BAAI/bge-m3, got %d", len(bgeEndpoints))
 	}
 }

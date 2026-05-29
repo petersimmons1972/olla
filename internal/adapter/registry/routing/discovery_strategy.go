@@ -105,7 +105,7 @@ func (s *DiscoveryStrategy) GetRoutableEndpoints(
 					"rejected",
 					len(healthyEndpoints),
 					modelEndpoints,
-					fmt.Errorf("discovery refresh requested but discovery service is not configured"),
+					errors.New("discovery refresh requested but discovery service is not configured"),
 				)
 		default:
 			return healthyEndpoints, ports.NewRoutingDecision(

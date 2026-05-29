@@ -122,12 +122,7 @@ func (p *FCDiscoveryPoller) Poll(ctx context.Context) error {
 	// compatible_endpoints=0 until ModelDiscoveryService's async cycle completes
 	// (petersimmons1972/olla#306).
 	if p.modelRegistry != nil {
-		if err := p.syncModelsToRegistry(ctx, entries); err != nil {
-			// Non-fatal: log and continue; model discovery will populate the registry
-			// on its next cycle. The cold-start window remains, but no data loss.
-			p.logger.Warn("fc-discovery: model pre-registration failed, discovery will retry",
-				"error", err)
-		}
+		p.syncModelsToRegistry(ctx, entries)
 	}
 
 	return nil
@@ -137,7 +132,7 @@ func (p *FCDiscoveryPoller) Poll(ctx context.Context) error {
 // the model registry, mirroring the replace-on-poll strategy used for endpoints.
 // Each (host, port) pair maps to exactly one model name from FC; that mapping is
 // cleared and re-written on every successful poll to evict stale entries.
-func (p *FCDiscoveryPoller) syncModelsToRegistry(ctx context.Context, entries []fcRegistryEntry) error {
+func (p *FCDiscoveryPoller) syncModelsToRegistry(ctx context.Context, entries []fcRegistryEntry) {
 	// Build the desired set of endpointURL→[]modelName from the fresh FC payload.
 	type endpointModels struct {
 		url    string
@@ -190,7 +185,6 @@ func (p *FCDiscoveryPoller) syncModelsToRegistry(ctx context.Context, entries []
 
 	p.logger.Debug("fc-discovery: pre-registered FC models in model registry",
 		"endpoints", len(desired))
-	return nil
 }
 
 // RunLoop starts a background polling loop. It polls immediately on first call, then

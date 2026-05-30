@@ -182,6 +182,30 @@ func TestDiscoveryStrategy_FallbackBehavior(t *testing.T) {
 	})
 }
 
+func TestDiscovery_NoWarmEndpoints_NoPanic(t *testing.T) {
+	ctx := context.Background()
+	testLogger := createTestLogger()
+	healthyEndpoints := []*domain.Endpoint{}
+	modelEndpoints := []string{}
+
+	strategy := &DiscoveryStrategy{
+		discovery: nil,
+		options: config.ModelRoutingStrategyOptions{
+			FallbackBehavior:       constants.FallbackBehaviorNone,
+			DiscoveryRefreshOnMiss: true,
+		},
+		logger:         testLogger,
+		strictFallback: NewStrictStrategy(testLogger),
+	}
+
+	assert.NotPanics(t, func() {
+		result, decision, err := strategy.GetRoutableEndpoints(ctx, "text-embedding-3-large", healthyEndpoints, modelEndpoints)
+		assert.Nil(t, result)
+		assert.Equal(t, "rejected", string(decision.Action))
+		assert.Error(t, err)
+	})
+}
+
 type mockDiscoveryForTest struct {
 	healthyEndpoints []*domain.Endpoint
 	shouldFail       bool

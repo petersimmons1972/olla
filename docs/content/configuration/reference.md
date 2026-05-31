@@ -274,6 +274,14 @@ discovery:
 | `static.endpoints[].check_interval` | duration | No | Health check interval (default: `5s`) |
 | `static.endpoints[].check_timeout` | duration | No | Health check timeout (default: `2s`) |
 | `static.endpoints[].model_filter` | object | No | Model filtering for this endpoint |
+| `static.endpoints[].outbound_auth` | object | No | Static outbound auth header for this endpoint (`type`, `value`, optional `header`) |
+
+`outbound_auth` supports:
+
+- `type: bearer` → sets `Authorization: Bearer <value>`
+- `type: basic` → sets `Authorization: Basic <value>`
+- `type: api_key` → sets `X-API-Key: <value>` (or custom `header`)
+- `type: header` → sets `<header>: <value>`
 
 #### URL Configuration
 

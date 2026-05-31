@@ -90,6 +90,18 @@ func CopyHeaders(proxyReq, originalReq *http.Request) {
 	updateForwardedHeaders(proxyReq, originalReq)
 }
 
+// ApplyEndpointOutboundAuth injects endpoint-specific outbound auth after inbound
+// headers are filtered so client credentials are never forwarded downstream.
+func ApplyEndpointOutboundAuth(proxyReq *http.Request, endpoint *domain.Endpoint) {
+	if endpoint == nil || endpoint.OutboundAuth == nil {
+		return
+	}
+	if endpoint.OutboundAuth.Header == "" || endpoint.OutboundAuth.Value == "" {
+		return
+	}
+	proxyReq.Header.Set(endpoint.OutboundAuth.Header, endpoint.OutboundAuth.Value)
+}
+
 // SHERPA-81: Update X-Forwarded-* headers in request
 // updateForwardedHeaders updates X-Forwarded-* headers
 func updateForwardedHeaders(proxyReq, originalReq *http.Request) {

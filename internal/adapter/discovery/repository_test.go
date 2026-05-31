@@ -283,6 +283,90 @@ func TestLoadFromConfig_ZeroPriorityRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLoadFromConfig_OutboundAuth(t *testing.T) {
+	t.Parallel()
+
+	repo := NewStaticEndpointRepository()
+	cfg := config.EndpointConfig{
+		Name:          "openai-compatible",
+		URL:           "https://api.openai.example",
+		Type:          "openai-compatible",
+		CheckInterval: 5 * time.Second,
+		CheckTimeout:  2 * time.Second,
+		Priority:      ptrInt(100),
+		OutboundAuth: &config.EndpointOutboundAuthConfig{
+			Type:  "bearer",
+			Value: "service-token",
+		},
+	}
+
+	err := repo.LoadFromConfig(context.Background(), []config.EndpointConfig{cfg})
+	if err != nil {
+		t.Fatalf("unexpected error loading config: %v", err)
+	}
+
+	endpoints, err := repo.GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll failed: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+
+	auth := endpoints[0].OutboundAuth
+	if auth == nil {
+		t.Fatal("expected outbound auth on endpoint")
+	}
+	if auth.Header != "Authorization" {
+		t.Fatalf("expected Authorization header, got %q", auth.Header)
+	}
+	if auth.Value != "Bearer service-token" {
+		t.Fatalf("expected bearer token value, got %q", auth.Value)
+	}
+}
+
+func TestLoadFromConfig_OutboundAuthValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		auth *config.EndpointOutboundAuthConfig
+	}{
+		{
+			name: "rejects_missing_value",
+			auth: &config.EndpointOutboundAuthConfig{Type: "bearer"},
+		},
+		{
+			name: "rejects_unknown_type",
+			auth: &config.EndpointOutboundAuthConfig{Type: "unknown", Value: "token"},
+		},
+		{
+			name: "rejects_header_type_without_header_name",
+			auth: &config.EndpointOutboundAuthConfig{Type: "header", Value: "token"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := NewStaticEndpointRepository()
+			cfg := config.EndpointConfig{
+				Name:          "bad-auth",
+				URL:           "http://localhost:11434",
+				Type:          "ollama",
+				CheckInterval: 5 * time.Second,
+				CheckTimeout:  2 * time.Second,
+				Priority:      ptrInt(100),
+				OutboundAuth:  tt.auth,
+			}
+
+			err := repo.LoadFromConfig(context.Background(), []config.EndpointConfig{cfg})
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
 func TestEndpointConfigValidation_WithType(t *testing.T) {
 	testCases := []struct {
 		name      string

@@ -334,15 +334,18 @@ curl -X POST http://localhost:40114/olla/openai/v1/images/generations \
 
 ## Authentication
 
-The Authorization header is forwarded to the backend as-is. For most local backends no key is required, but if your backend expects one you can pass it through:
+Client `Authorization`/API-key headers are intentionally stripped before proxying. For backends that require credentials, configure endpoint-level outbound auth:
 
 ```yaml
-endpoints:
-  - url: "http://localhost:8080"
-    name: "my-openai-compatible-backend"
-    type: "openai-compatible"  # or "openai" — both are accepted aliases
-    headers:
-      Authorization: "Bearer ${API_KEY}"
+discovery:
+  static:
+    endpoints:
+      - url: "https://api.example.com"
+        name: "my-openai-compatible-backend"
+        type: "openai-compatible"  # or "openai" — both are accepted aliases
+        outbound_auth:
+          type: "bearer"
+          value: "${API_KEY}"
 ```
 
 ## Rate Limits

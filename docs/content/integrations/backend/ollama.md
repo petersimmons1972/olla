@@ -137,8 +137,20 @@ discovery:
         check_timeout: 5s
 ```
 
-!!! note "Authentication Not Supported"
-    Olla does not currently support authentication headers for endpoints. If your Ollama server requires authentication, you'll need to use a reverse proxy or wait for this feature to be added.
+!!! note "Endpoint Outbound Auth"
+    If your Ollama endpoint requires credentials, configure per-endpoint `outbound_auth` so Olla injects backend credentials without forwarding client credentials:
+
+    ```yaml
+    discovery:
+      static:
+        endpoints:
+          - url: "https://ollama.example.com"
+            name: "ollama-cloud"
+            type: "ollama"
+            outbound_auth:
+              type: "bearer"
+              value: "${OLLAMA_BACKEND_TOKEN}"
+    ```
 
 ## Anthropic Messages API Support
 

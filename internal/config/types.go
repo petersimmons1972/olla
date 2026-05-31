@@ -128,7 +128,8 @@ type StaticDiscoveryConfig struct {
 
 // EndpointConfig holds configuration for an AI inference endpoint
 type EndpointConfig struct {
-	ModelFilter *domain.FilterConfig `yaml:"model_filter,omitempty"`
+	ModelFilter  *domain.FilterConfig        `yaml:"model_filter,omitempty"`
+	OutboundAuth *EndpointOutboundAuthConfig `yaml:"outbound_auth,omitempty"`
 	// Priority uses a pointer so nil means "omitted in config" rather than explicitly zero.
 	// This lets applyEndpointDefaults distinguish "user set 0" from "user said nothing",
 	// since 0 is a valid, lower-than-default priority value.
@@ -141,6 +142,14 @@ type EndpointConfig struct {
 	CheckInterval  time.Duration `yaml:"check_interval"`
 	CheckTimeout   time.Duration `yaml:"check_timeout"`
 	PreservePath   bool          `yaml:"preserve_path"`
+}
+
+// EndpointOutboundAuthConfig controls static outbound auth headers injected by Olla
+// for a specific backend endpoint.
+type EndpointOutboundAuthConfig struct {
+	Type   string `yaml:"type"`   // bearer, api_key, basic, header
+	Header string `yaml:"header"` // required for type=header, optional otherwise
+	Value  string `yaml:"value"`  // token/secret value
 }
 
 // LoggingConfig holds logging configuration

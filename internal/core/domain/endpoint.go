@@ -37,6 +37,13 @@ type Endpoint struct {
 	ConsecutiveFailures   int
 	BackoffMultiplier     int
 	PreservePath          bool
+	OutboundAuth          *OutboundAuth
+}
+
+// OutboundAuth defines a static outbound header for requests proxied to an endpoint.
+type OutboundAuth struct {
+	Header string
+	Value  string
 }
 
 func (e *Endpoint) GetURLString() string {

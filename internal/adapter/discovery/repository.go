@@ -23,6 +23,7 @@ const (
 	DefaultCheckInterval = 5 * time.Second
 	DefaultCheckTimeout  = 2 * time.Second
 	DefaultPriority      = 100
+	DefaultAuthHeader    = "Authorization"
 )
 
 type StaticEndpointRepository struct {
@@ -188,6 +189,7 @@ func (r *StaticEndpointRepository) LoadFromConfig(ctx context.Context, configs [
 			BackoffMultiplier:     1,
 			NextCheckTime:         now,
 			PreservePath:          cfg.PreservePath,
+			OutboundAuth:          buildOutboundAuth(cfg.OutboundAuth),
 		}
 
 		newEndpoints[urlString] = newEndpoint
@@ -299,5 +301,55 @@ func (r *StaticEndpointRepository) validateEndpointConfig(cfg config.EndpointCon
 		}
 	}
 
+	if cfg.OutboundAuth != nil {
+		auth := cfg.OutboundAuth
+		if auth.Value == "" {
+			return errors.New("outbound_auth.value cannot be empty when outbound_auth is configured")
+		}
+		switch auth.Type {
+		case "bearer", "api_key", "basic", "header":
+		default:
+			return fmt.Errorf("unsupported outbound_auth.type %q (supported: bearer, api_key, basic, header)", auth.Type)
+		}
+		if auth.Type == "header" && auth.Header == "" {
+			return errors.New("outbound_auth.header cannot be empty when outbound_auth.type=header")
+		}
+	}
+
 	return nil
+}
+
+func buildOutboundAuth(cfg *config.EndpointOutboundAuthConfig) *domain.OutboundAuth {
+	if cfg == nil {
+		return nil
+	}
+
+	switch cfg.Type {
+	case "bearer":
+		return &domain.OutboundAuth{
+			Header: DefaultAuthHeader,
+			Value:  "Bearer " + cfg.Value,
+		}
+	case "api_key":
+		header := cfg.Header
+		if header == "" {
+			header = "X-API-Key"
+		}
+		return &domain.OutboundAuth{
+			Header: header,
+			Value:  cfg.Value,
+		}
+	case "basic":
+		return &domain.OutboundAuth{
+			Header: DefaultAuthHeader,
+			Value:  "Basic " + cfg.Value,
+		}
+	case "header":
+		return &domain.OutboundAuth{
+			Header: cfg.Header,
+			Value:  cfg.Value,
+		}
+	default:
+		return nil
+	}
 }

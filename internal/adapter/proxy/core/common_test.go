@@ -257,6 +257,54 @@ func TestCopyHeaders_ProxyHeaders(t *testing.T) {
 	}
 }
 
+func TestApplyEndpointOutboundAuth(t *testing.T) {
+	tests := []struct {
+		name           string
+		inboundAuth    string
+		outboundHeader string
+		outboundValue  string
+		wantHeader     string
+		wantValue      string
+	}{
+		{
+			name:           "injects_endpoint_auth_after_inbound_strip",
+			inboundAuth:    "Bearer client-secret",
+			outboundHeader: "Authorization",
+			outboundValue:  "Bearer backend-token",
+			wantHeader:     "Authorization",
+			wantValue:      "Bearer backend-token",
+		},
+		{
+			name:           "injects_custom_api_key_header",
+			outboundHeader: "X-API-Key",
+			outboundValue:  "backend-api-key",
+			wantHeader:     "X-API-Key",
+			wantValue:      "backend-api-key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalReq := httptest.NewRequest("POST", "http://example.com/v1/chat/completions", nil)
+			if tt.inboundAuth != "" {
+				originalReq.Header.Set("Authorization", tt.inboundAuth)
+			}
+			proxyReq := httptest.NewRequest("POST", "http://backend.example.com/v1/chat/completions", nil)
+			CopyHeaders(proxyReq, originalReq)
+
+			endpoint := &domain.Endpoint{
+				OutboundAuth: &domain.OutboundAuth{
+					Header: tt.outboundHeader,
+					Value:  tt.outboundValue,
+				},
+			}
+			ApplyEndpointOutboundAuth(proxyReq, endpoint)
+
+			assert.Equal(t, tt.wantValue, proxyReq.Header.Get(tt.wantHeader))
+		})
+	}
+}
+
 func TestSetResponseHeaders(t *testing.T) {
 	tests := []struct {
 		name            string

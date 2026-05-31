@@ -432,7 +432,7 @@ func (s *Service) buildTargetURL(r *http.Request, endpoint *domain.Endpoint) *ur
 }
 
 // prepareProxyRequest creates and prepares the proxy request with headers
-func (s *Service) prepareProxyRequest(ctx context.Context, r *http.Request, targetURL *url.URL, stats *ports.RequestStats) (*http.Request, error) {
+func (s *Service) prepareProxyRequest(ctx context.Context, r *http.Request, targetURL *url.URL, endpoint *domain.Endpoint, stats *ports.RequestStats) (*http.Request, error) {
 	proxyReq, err := http.NewRequestWithContext(ctx, r.Method, targetURL.String(), r.Body)
 	if err != nil {
 		return nil, err
@@ -441,6 +441,7 @@ func (s *Service) prepareProxyRequest(ctx context.Context, r *http.Request, targ
 	// Copy headers
 	headerStart := time.Now()
 	core.CopyHeaders(proxyReq, r)
+	core.InjectEndpointAuth(proxyReq, endpoint)
 	stats.HeaderProcessingMs = time.Since(headerStart).Milliseconds()
 
 	// Add model header

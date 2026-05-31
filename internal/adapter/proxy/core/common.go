@@ -90,6 +90,18 @@ func CopyHeaders(proxyReq, originalReq *http.Request) {
 	updateForwardedHeaders(proxyReq, originalReq)
 }
 
+// InjectEndpointAuth sets endpoint-scoped bearer auth when available.
+// It never overwrites an existing Authorization header.
+func InjectEndpointAuth(proxyReq *http.Request, endpoint *domain.Endpoint) {
+	if proxyReq == nil || endpoint == nil || endpoint.APIKey == "" {
+		return
+	}
+	if proxyReq.Header.Get(constants.HeaderAuthorization) != "" {
+		return
+	}
+	proxyReq.Header.Set(constants.HeaderAuthorization, "Bearer "+endpoint.APIKey)
+}
+
 // SHERPA-81: Update X-Forwarded-* headers in request
 // updateForwardedHeaders updates X-Forwarded-* headers
 func updateForwardedHeaders(proxyReq, originalReq *http.Request) {

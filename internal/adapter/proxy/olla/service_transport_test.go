@@ -1,10 +1,16 @@
 package olla
 
 import (
+	"context"
+	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
 	"github.com/thushan/olla/internal/adapter/proxy/config"
+	"github.com/thushan/olla/internal/core/constants"
+	"github.com/thushan/olla/internal/core/domain"
+	"github.com/thushan/olla/internal/core/ports"
 )
 
 // TestCreateOptimisedTransport_ConnectionLimits verifies that both MaxConnsPerHost and
@@ -80,5 +86,49 @@ func TestCreateOptimisedTransport_FieldsAreDistinct(t *testing.T) {
 	}
 	if transport.MaxIdleConnsPerHost != 10 {
 		t.Errorf("MaxIdleConnsPerHost: want 10, got %d", transport.MaxIdleConnsPerHost)
+	}
+}
+
+func TestPrepareProxyRequest_InjectsAPIKey(t *testing.T) {
+	t.Parallel()
+
+	svc := &Service{}
+	req, err := http.NewRequest(http.MethodPost, "http://client.local/v1/chat/completions", http.NoBody)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	targetURL, _ := url.Parse("http://backend.local/v1/chat/completions")
+	stats := &ports.RequestStats{StartTime: time.Now()}
+	endpoint := &domain.Endpoint{APIKey: "endpoint-key"}
+
+	proxyReq, err := svc.prepareProxyRequest(context.Background(), req, targetURL, endpoint, stats)
+	if err != nil {
+		t.Fatalf("prepareProxyRequest: %v", err)
+	}
+
+	if got := proxyReq.Header.Get(constants.HeaderAuthorization); got != "Bearer endpoint-key" {
+		t.Fatalf("Authorization header = %q, want %q", got, "Bearer endpoint-key")
+	}
+}
+
+func TestPrepareProxyRequest_NoAPIKey_NoAuthHeader(t *testing.T) {
+	t.Parallel()
+
+	svc := &Service{}
+	req, err := http.NewRequest(http.MethodPost, "http://client.local/v1/chat/completions", http.NoBody)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	targetURL, _ := url.Parse("http://backend.local/v1/chat/completions")
+	stats := &ports.RequestStats{StartTime: time.Now()}
+	endpoint := &domain.Endpoint{}
+
+	proxyReq, err := svc.prepareProxyRequest(context.Background(), req, targetURL, endpoint, stats)
+	if err != nil {
+		t.Fatalf("prepareProxyRequest: %v", err)
+	}
+
+	if got := proxyReq.Header.Get(constants.HeaderAuthorization); got != "" {
+		t.Fatalf("Authorization header = %q, want empty", got)
 	}
 }

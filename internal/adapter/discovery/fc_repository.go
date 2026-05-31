@@ -25,10 +25,10 @@ type fcModelSpec struct {
 	HealthCheckURL          string   `json:"healthCheckURL,omitempty"`
 	ModelURL                string   `json:"modelURL,omitempty"`
 	CircuitBreakerTimeout   string   `json:"circuitBreakerTimeout,omitempty"`
+	Capabilities            []string `json:"capabilities,omitempty"`
 	Port                    int      `json:"port"`
 	Priority                int      `json:"priority,omitempty"`
 	CircuitBreakerThreshold int      `json:"circuitBreakerThreshold,omitempty"`
-	Capabilities            []string `json:"capabilities,omitempty"`
 }
 
 // fcRegistryEntry mirrors the Flight Controller RegistryEntry type returned by

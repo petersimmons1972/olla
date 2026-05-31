@@ -25,12 +25,12 @@ type Endpoint struct {
 	ModelFilter             *FilterConfig
 	Name                    string
 	Type                    string `json:"type,omitempty"`
-	Capabilities            []string
 	Status                  EndpointStatus
 	URLString               string
 	HealthCheckPathString   string
 	HealthCheckURLString    string
 	ModelURLString          string
+	Capabilities            []string
 	LastLatency             time.Duration
 	CheckInterval           time.Duration
 	CheckTimeout            time.Duration

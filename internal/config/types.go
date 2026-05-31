@@ -149,9 +149,9 @@ type EndpointConfig struct {
 	URL            string   `yaml:"url"`
 	Name           string   `yaml:"name"`
 	Type           string   `yaml:"type"`
-	Capabilities   []string `yaml:"capabilities,omitempty"`
 	HealthCheckURL string   `yaml:"health_check_url"`
 	ModelURL       string   `yaml:"model_url"`
+	Capabilities   []string `yaml:"capabilities,omitempty"`
 	// CircuitBreakerTimeout overrides the circuit breaker cooldown for this endpoint.
 	// Zero means use the global default.
 	CircuitBreakerTimeout time.Duration `yaml:"circuit_breaker_timeout,omitempty"`

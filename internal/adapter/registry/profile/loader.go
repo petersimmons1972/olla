@@ -370,7 +370,7 @@ func (l *ProfileLoader) loadLlamaCppBuiltIn(profiles map[string]domain.Inference
 	llamaCppConfig.Routing.Prefixes = []string{"llamacpp", "llama-cpp", "llama_cpp"}
 	llamaCppConfig.API.OpenAICompatible = true
 	llamaCppConfig.API.Paths = []string{
-		DefaultHealthCheckPath,                       // health check
+		DefaultHealthCheckPath,          // health check
 		"/props",                        // server properties
 		"/slots",                        // slot status
 		"/metrics",                      // prometheus metrics
@@ -435,7 +435,7 @@ func (l *ProfileLoader) loadLlamaCppBuiltIn(profiles map[string]domain.Inference
 	vllmConfig.Routing.Prefixes = []string{domain.ProfileVLLM}
 	vllmConfig.API.OpenAICompatible = true
 	vllmConfig.API.Paths = []string{
-		DefaultHealthCheckPath,                       // 0: health check (vLLM-specific)
+		DefaultHealthCheckPath,          // 0: health check (vLLM-specific)
 		DefaultModelsUri,                // 1: list models
 		constants.PathV1ChatCompletions, // 2: chat completions
 		constants.PathV1Completions,     // 3: text completions

@@ -174,6 +174,7 @@ func (r *StaticEndpointRepository) LoadFromConfig(ctx context.Context, configs [
 			Name:                    cfg.Name,
 			URL:                     endpointURL,
 			Type:                    cfg.Type,
+			Capabilities:            cfg.Capabilities,
 			Priority:                *cfg.Priority,
 			HealthCheckURL:          healthCheckURL,
 			ModelUrl:                modelURL,

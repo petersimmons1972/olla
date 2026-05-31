@@ -878,3 +878,35 @@ func TestStaticEndpointRepository_EmptyURLs_WithNestedPath(t *testing.T) {
 		t.Errorf("ModelURLString = %q, expected %q", endpoint.ModelURLString, expectedModelURL)
 	}
 }
+
+func TestLoadFromConfig_PreservesEndpointCapabilities(t *testing.T) {
+	repo := NewStaticEndpointRepository()
+	configs := []config.EndpointConfig{
+		{
+			Name:          "embedding-endpoint",
+			URL:           "http://localhost:11434",
+			Type:          "openai",
+			Capabilities:  []string{"embeddings"},
+			CheckInterval: 5 * time.Second,
+			CheckTimeout:  2 * time.Second,
+		},
+	}
+
+	if err := repo.LoadFromConfig(context.Background(), configs); err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+
+	endpoints, err := repo.GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll failed: %v", err)
+	}
+
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+
+	endpoint := endpoints[0]
+	if len(endpoint.Capabilities) != 1 || endpoint.Capabilities[0] != "embeddings" {
+		t.Fatalf("Capabilities = %#v, expected [\"embeddings\"]", endpoint.Capabilities)
+	}
+}

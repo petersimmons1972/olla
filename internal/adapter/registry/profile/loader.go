@@ -419,6 +419,47 @@ func (l *ProfileLoader) loadLlamaCppBuiltIn(profiles map[string]domain.Inference
 	}
 
 	profiles[domain.ProfileLlamaCpp] = NewConfigurableProfile(llamaCppConfig)
+
+	// vLLM built-in profile — minimal definition so ValidateProfileType("vllm") works even
+	// when config/profiles/vllm.yaml is not on disk (e.g. container without profiles dir,
+	// or NewFactoryWithDefaults fallback to NewFactory("")). The YAML profile, when loaded,
+	// overrides this entry with the full vLLM-specific configuration.
+	// See: petersimmons1972/olla#57
+	vllmConfig := &domain.ProfileConfig{
+		Name:        domain.ProfileVLLM,
+		Version:     "1.0",
+		DisplayName: "vLLM",
+		Description: "vLLM high-performance inference server (OpenAI-compatible)",
+	}
+	vllmConfig.Routing.Prefixes = []string{domain.ProfileVLLM}
+	vllmConfig.API.OpenAICompatible = true
+	vllmConfig.API.Paths = []string{
+		"/health",                       // 0: health check (vLLM-specific)
+		DefaultModelsUri,                // 1: list models
+		constants.PathV1ChatCompletions, // 2: chat completions
+		constants.PathV1Completions,     // 3: text completions
+		"/v1/embeddings",                // 4: embeddings
+	}
+	vllmConfig.API.ModelDiscoveryPath = DefaultModelsUri
+	vllmConfig.API.HealthCheckPath = "/health"
+	vllmConfig.Characteristics.Timeout = 2 * time.Minute
+	vllmConfig.Characteristics.MaxConcurrentRequests = 100
+	vllmConfig.Characteristics.DefaultPriority = 80
+	vllmConfig.Characteristics.StreamingSupport = true
+	vllmConfig.Detection.PathIndicators = []string{DefaultModelsUri, "/health"}
+	vllmConfig.Request.ResponseFormat = constants.ProviderTypeVLLM
+	vllmConfig.Request.ModelFieldPaths = []string{DefaultModelKey}
+	vllmConfig.Request.ParsingRules.ChatCompletionsPath = constants.PathV1ChatCompletions
+	vllmConfig.Request.ParsingRules.CompletionsPath = constants.PathV1Completions
+	vllmConfig.Request.ParsingRules.ModelFieldName = DefaultModelKey
+	vllmConfig.Request.ParsingRules.SupportsStreaming = true
+	vllmConfig.PathIndices.Health = 0
+	vllmConfig.PathIndices.Models = 1
+	vllmConfig.PathIndices.ChatCompletions = 2
+	vllmConfig.PathIndices.Completions = 3
+	vllmConfig.PathIndices.Embeddings = 4
+
+	profiles[domain.ProfileVLLM] = NewConfigurableProfile(vllmConfig)
 }
 
 // GetProfile returns a profile by name

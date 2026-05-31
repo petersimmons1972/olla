@@ -20,9 +20,9 @@ func TestNewFactory(t *testing.T) {
 	factory := testFactory(t)
 
 	profiles := factory.GetAvailableProfiles()
-	expectedProfiles := []string{domain.ProfileLmStudio, domain.ProfileOllama, domain.ProfileLlamaCpp}
+	expectedProfiles := []string{domain.ProfileLmStudio, domain.ProfileOllama, domain.ProfileLlamaCpp, domain.ProfileVLLM}
 
-	// Built-in profiles: Ollama, LM Studio, llama.cpp (not OpenAI-compatible since it's fallback)
+	// Built-in profiles: Ollama, LM Studio, llama.cpp, vLLM (not OpenAI-compatible since it's fallback)
 	if len(profiles) != len(expectedProfiles) {
 		t.Errorf("Expected %d profiles, got %d (profiles: %v)", len(expectedProfiles), len(profiles), profiles)
 	}
@@ -115,7 +115,7 @@ func TestValidateProfileType_WithRoutingPrefixes(t *testing.T) {
 		{"empty provider", "", false},
 
 		// vLLM if profile exists - not in built-in profiles
-		{"vllm provider", "vllm", false}, // vllm is not a built-in profile
+		{"vllm provider", "vllm", true}, // vllm is now a built-in profile (#57)
 	}
 
 	for _, tt := range tests {

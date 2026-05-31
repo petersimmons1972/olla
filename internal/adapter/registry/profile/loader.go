@@ -51,6 +51,7 @@ func NewProfileLoaderWithFilter(profilesDir string, profileFilter *domain.Filter
 
 const DefaultModelKey = "model"
 const DefaultModelsUri = "/v1/models"
+const DefaultHealthCheckPath = "/health"
 
 func (l *ProfileLoader) LoadProfiles() error {
 	l.mu.Lock()
@@ -369,7 +370,7 @@ func (l *ProfileLoader) loadLlamaCppBuiltIn(profiles map[string]domain.Inference
 	llamaCppConfig.Routing.Prefixes = []string{"llamacpp", "llama-cpp", "llama_cpp"}
 	llamaCppConfig.API.OpenAICompatible = true
 	llamaCppConfig.API.Paths = []string{
-		"/health",                       // health check
+		DefaultHealthCheckPath,                       // health check
 		"/props",                        // server properties
 		"/slots",                        // slot status
 		"/metrics",                      // prometheus metrics
@@ -379,12 +380,12 @@ func (l *ProfileLoader) loadLlamaCppBuiltIn(profiles map[string]domain.Inference
 		"/v1/embeddings",                // embeddings
 	}
 	llamaCppConfig.API.ModelDiscoveryPath = DefaultModelsUri
-	llamaCppConfig.API.HealthCheckPath = "/health"
+	llamaCppConfig.API.HealthCheckPath = DefaultHealthCheckPath
 	llamaCppConfig.Characteristics.Timeout = 5 * time.Minute
 	llamaCppConfig.Characteristics.MaxConcurrentRequests = 4
 	llamaCppConfig.Characteristics.DefaultPriority = 95 // High priority: native GGUF inference
 	llamaCppConfig.Characteristics.StreamingSupport = true
-	llamaCppConfig.Detection.PathIndicators = []string{DefaultModelsUri, "/health", "/slots", "/props"}
+	llamaCppConfig.Detection.PathIndicators = []string{DefaultModelsUri, DefaultHealthCheckPath, "/slots", "/props"}
 	llamaCppConfig.Request.ResponseFormat = constants.ProviderTypeLlamaCpp
 	llamaCppConfig.Request.ModelFieldPaths = []string{DefaultModelKey}
 	llamaCppConfig.Request.ParsingRules.ChatCompletionsPath = constants.PathV1ChatCompletions
@@ -434,19 +435,19 @@ func (l *ProfileLoader) loadLlamaCppBuiltIn(profiles map[string]domain.Inference
 	vllmConfig.Routing.Prefixes = []string{domain.ProfileVLLM}
 	vllmConfig.API.OpenAICompatible = true
 	vllmConfig.API.Paths = []string{
-		"/health",                       // 0: health check (vLLM-specific)
+		DefaultHealthCheckPath,                       // 0: health check (vLLM-specific)
 		DefaultModelsUri,                // 1: list models
 		constants.PathV1ChatCompletions, // 2: chat completions
 		constants.PathV1Completions,     // 3: text completions
 		"/v1/embeddings",                // 4: embeddings
 	}
 	vllmConfig.API.ModelDiscoveryPath = DefaultModelsUri
-	vllmConfig.API.HealthCheckPath = "/health"
+	vllmConfig.API.HealthCheckPath = DefaultHealthCheckPath
 	vllmConfig.Characteristics.Timeout = 2 * time.Minute
 	vllmConfig.Characteristics.MaxConcurrentRequests = 100
 	vllmConfig.Characteristics.DefaultPriority = 80
 	vllmConfig.Characteristics.StreamingSupport = true
-	vllmConfig.Detection.PathIndicators = []string{DefaultModelsUri, "/health"}
+	vllmConfig.Detection.PathIndicators = []string{DefaultModelsUri, DefaultHealthCheckPath}
 	vllmConfig.Request.ResponseFormat = constants.ProviderTypeVLLM
 	vllmConfig.Request.ModelFieldPaths = []string{DefaultModelKey}
 	vllmConfig.Request.ParsingRules.ChatCompletionsPath = constants.PathV1ChatCompletions

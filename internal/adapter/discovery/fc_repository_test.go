@@ -23,6 +23,7 @@ type FCRegistryEntry struct {
 type FCModelSpec struct {
 	Name                    string   `json:"name"`
 	Framework               string   `json:"framework,omitempty"`
+	OllaEndpointType        string   `json:"ollaEndpointType,omitempty"`
 	EndpointType            string   `json:"endpointType,omitempty"`
 	HealthCheckURL          string   `json:"healthCheckURL,omitempty"`
 	ModelURL                string   `json:"modelURL,omitempty"`
@@ -31,6 +32,81 @@ type FCModelSpec struct {
 	Priority                int      `json:"priority,omitempty"`
 	CircuitBreakerThreshold int      `json:"circuitBreakerThreshold,omitempty"`
 	Capabilities            []string `json:"capabilities,omitempty"`
+}
+
+func TestFCEndpointRepository_PollMixedPayloadSkipsUnrecognizedAndLoadsEmbeddings(t *testing.T) {
+	entries := []FCRegistryEntry{
+		{
+			Host: "oblivion.petersimmons.com",
+			Models: []FCModelSpec{
+				{
+					Name:             "qwen3-32b-vllm",
+					Framework:        "vllm",
+					OllaEndpointType: "openai-compatible",
+					Capabilities:     []string{"chat"},
+					Port:             8000,
+				},
+				{
+					Name:         "bad-endpoint",
+					Framework:    "mystery-framework",
+					Capabilities: []string{"chat"},
+					Port:         8010,
+				},
+			},
+		},
+		{
+			Host: "precision.petersimmons.com",
+			Models: []FCModelSpec{
+				{
+					Name:             "bge-m3-infinity",
+					Framework:        "infinity",
+					OllaEndpointType: "openai-compatible",
+					Capabilities:     []string{"embeddings"},
+					Port:             8005,
+				},
+			},
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	repo := discovery.NewStaticEndpointRepository()
+	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("Poll() returned error: %v", err)
+	}
+
+	all, err := repo.GetAll(ctx)
+	if err != nil {
+		t.Fatalf("GetAll() returned error: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 loaded endpoints (1 skipped), got %d", len(all))
+	}
+
+	embeddingsCount := 0
+	for _, ep := range all {
+		for _, capability := range ep.Capabilities {
+			if capability == "embeddings" {
+				embeddingsCount++
+			}
+		}
+	}
+	if embeddingsCount == 0 {
+		t.Fatalf("expected at least one embeddings-capable endpoint in loaded set")
+	}
 }
 
 func newTestLogger() logger.StyledLogger {

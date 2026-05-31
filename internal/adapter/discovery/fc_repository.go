@@ -21,6 +21,7 @@ import (
 type fcModelSpec struct {
 	Name                    string   `json:"name"`
 	Framework               string   `json:"framework"`
+	OllaEndpointType        string   `json:"ollaEndpointType,omitempty"`
 	EndpointType            string   `json:"endpointType,omitempty"`
 	HealthCheckURL          string   `json:"healthCheckURL,omitempty"`
 	ModelURL                string   `json:"modelURL,omitempty"`
@@ -110,7 +111,7 @@ func (p *FCDiscoveryPoller) Poll(ctx context.Context) error {
 		return fmt.Errorf("fc-discovery: decode registry response: %w", err)
 	}
 
-	configs := fcEntriesToEndpointConfigs(entries)
+	configs := p.fcEntriesToEndpointConfigs(entries)
 	if err := p.repo.LoadFromConfig(ctx, configs); err != nil {
 		return fmt.Errorf("fc-discovery: load endpoint configs: %w", err)
 	}
@@ -212,7 +213,7 @@ func (p *FCDiscoveryPoller) RunLoop(ctx context.Context, interval time.Duration)
 // Type and optional endpoint tuning are preserved from FC when present. Framework
 // defaults keep older FC registries useful while allowing richer metadata to make
 // FC and static discovery produce equivalent routing behaviour.
-func fcEntriesToEndpointConfigs(entries []fcRegistryEntry) []config.EndpointConfig {
+func (p *FCDiscoveryPoller) fcEntriesToEndpointConfigs(entries []fcRegistryEntry) []config.EndpointConfig {
 	defaultPriority := 100
 	var configs []config.EndpointConfig
 
@@ -220,6 +221,23 @@ func fcEntriesToEndpointConfigs(entries []fcRegistryEntry) []config.EndpointConf
 		for _, model := range entry.Models {
 			if model.Port == 0 {
 				continue // skip models without a port (incomplete CRD)
+			}
+			endpointType, ok := fcEndpointType(model)
+			if !ok {
+				p.logger.Warn("fc-discovery: skipping endpoint with unsupported endpoint type",
+					"host", entry.Host,
+					"model", model.Name,
+					"framework", model.Framework,
+					"endpoint_type", model.EndpointType,
+					"olla_endpoint_type", model.OllaEndpointType)
+				continue
+			}
+			if endpointType != "" && !p.repo.profileFactory.ValidateProfileType(endpointType) {
+				p.logger.Warn("fc-discovery: skipping endpoint with unsupported profile type",
+					"host", entry.Host,
+					"model", model.Name,
+					"type", endpointType)
+				continue
 			}
 			priority := defaultPriority
 			if model.Priority != 0 {
@@ -229,7 +247,7 @@ func fcEntriesToEndpointConfigs(entries []fcRegistryEntry) []config.EndpointConf
 			cfg := config.EndpointConfig{
 				URL:                     "http://" + net.JoinHostPort(entry.Host, strconv.Itoa(model.Port)),
 				Name:                    fmt.Sprintf("%s-%s", entry.Host, model.Name),
-				Type:                    fcEndpointType(model),
+				Type:                    endpointType,
 				Priority:                &priority,
 				Capabilities:            model.Capabilities,
 				HealthCheckURL:          model.HealthCheckURL,
@@ -243,21 +261,26 @@ func fcEntriesToEndpointConfigs(entries []fcRegistryEntry) []config.EndpointConf
 	return configs
 }
 
-func fcEndpointType(model fcModelSpec) string {
+func fcEndpointType(model fcModelSpec) (string, bool) {
+	if model.OllaEndpointType != "" {
+		return model.OllaEndpointType, true
+	}
 	if model.EndpointType != "" {
-		return model.EndpointType
+		return model.EndpointType, true
 	}
 
 	switch strings.ToLower(model.Framework) {
+	case "":
+		return constants.ProviderTypeOpenAI, true
 	case constants.ProviderTypeVLLM:
-		return constants.ProviderTypeVLLM
+		return constants.ProviderTypeVLLM, true
 	case constants.ProviderTypeOllama:
-		return constants.ProviderTypeOllama
+		return constants.ProviderTypeOllama, true
 	case constants.ProviderTypeLlamaCpp, "llama-cpp", "llama_cpp":
-		return constants.ProviderTypeLlamaCpp
+		return constants.ProviderTypeLlamaCpp, true
 	case "infinity":
-		return constants.ProviderTypeOpenAI
+		return constants.ProviderTypeOpenAI, true
 	default:
-		return constants.ProviderTypeOpenAI
+		return "", false
 	}
 }

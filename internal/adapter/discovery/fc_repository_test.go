@@ -97,7 +97,11 @@ func TestFCEndpointRepository_PollMixedPayloadSkipsUnrecognizedAndLoadsEmbedding
 	}
 
 	embeddingsCount := 0
+	openAICompatTypeCount := 0
 	for _, ep := range all {
+		if ep.Type == "openai-compatible" {
+			openAICompatTypeCount++
+		}
 		for _, capability := range ep.Capabilities {
 			if capability == "embeddings" {
 				embeddingsCount++
@@ -106,6 +110,9 @@ func TestFCEndpointRepository_PollMixedPayloadSkipsUnrecognizedAndLoadsEmbedding
 	}
 	if embeddingsCount == 0 {
 		t.Fatalf("expected at least one embeddings-capable endpoint in loaded set")
+	}
+	if openAICompatTypeCount == 0 {
+		t.Fatalf("expected at least one loaded endpoint with Type openai-compatible")
 	}
 }
 

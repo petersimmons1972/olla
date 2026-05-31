@@ -10,6 +10,7 @@ import (
 
 	"github.com/thushan/olla/internal/adapter/discovery"
 	"github.com/thushan/olla/internal/adapter/registry"
+	"github.com/thushan/olla/internal/adapter/registry/profile"
 	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/logger"
 )
@@ -661,5 +662,82 @@ func TestFCEndpointRepository_PollRegistersMultipleModelsSameEndpoint(t *testing
 			names = append(names, m.Name)
 		}
 		t.Errorf("expected 2 models on %q, got %d: %v", wantURL, len(em.Models), names)
+	}
+}
+
+// TestFCEndpointRepository_VLLMAndOpenAICompatibleTypesAccepted verifies that endpoints
+// with type "vllm" or "openai-compatible" are accepted by FC discovery when the profile
+// factory is initialised from built-in profiles only (no YAML on disk). This is the
+// regression test for petersimmons1972/olla#57 where the built-in profile factory lacked
+// vllm, causing a hard crash on the first FC poll in any environment where config/profiles/
+// is unavailable (container without profiles dir, or NewFactoryWithDefaults failure fallback).
+func TestFCEndpointRepository_VLLMAndOpenAICompatibleTypesAccepted(t *testing.T) {
+	entries := []FCRegistryEntry{
+		{
+			Host: "oblivion.petersimmons.com",
+			Models: []FCModelSpec{
+				{
+					Name:         "qwen3-coder-30b",
+					EndpointType: "vllm",
+					Port:         8000,
+				},
+			},
+		},
+		{
+			Host: "precision.petersimmons.com",
+			Models: []FCModelSpec{
+				{
+					Name:         "bge-m3",
+					EndpointType: "openai-compatible",
+					Port:         8005,
+				},
+			},
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	// Use built-in-only factory (no YAML directory) to simulate the failure mode from #57:
+	// NewFactoryWithDefaults() fails to find config/profiles/, falls back to NewFactory(""),
+	// which only has the hardcoded built-in profiles. vllm must be recognised without YAML.
+	builtinFactory, err := profile.NewFactory("")
+	if err != nil {
+		t.Fatalf("NewFactory(\"\") error: %v", err)
+	}
+	repo := discovery.NewStaticEndpointRepositoryWithFactory(builtinFactory)
+	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("Poll() returned error: %v (vllm/openai-compatible types should be accepted by built-in profiles)", err)
+	}
+
+	all, err := repo.GetAll(ctx)
+	if err != nil {
+		t.Fatalf("GetAll() returned error: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 endpoints (vllm + openai-compatible), got %d", len(all))
+	}
+
+	typesSeen := make(map[string]bool)
+	for _, ep := range all {
+		typesSeen[ep.Type] = true
+	}
+	if !typesSeen["vllm"] {
+		t.Errorf("expected endpoint with type \"vllm\" but not found; types seen: %v", typesSeen)
+	}
+	if !typesSeen["openai-compatible"] {
+		t.Errorf("expected endpoint with type \"openai-compatible\" but not found; types seen: %v", typesSeen)
 	}
 }

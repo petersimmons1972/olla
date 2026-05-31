@@ -910,3 +910,63 @@ func TestLoadFromConfig_PreservesEndpointCapabilities(t *testing.T) {
 		t.Fatalf("Capabilities = %#v, expected [\"embeddings\"]", endpoint.Capabilities)
 	}
 }
+
+func TestLoadFromConfig_APIKeyMapped(t *testing.T) {
+	repo := NewStaticEndpointRepository()
+	configs := []config.EndpointConfig{
+		{
+			Name:          "static-key-endpoint",
+			URL:           "http://localhost:11434",
+			Type:          "ollama",
+			APIKey:        "static-key",
+			CheckInterval: 5 * time.Second,
+			CheckTimeout:  2 * time.Second,
+		},
+	}
+
+	if err := repo.LoadFromConfig(context.Background(), configs); err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+
+	endpoints, err := repo.GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll failed: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0].APIKey != "static-key" {
+		t.Fatalf("APIKey = %q, want %q", endpoints[0].APIKey, "static-key")
+	}
+}
+
+func TestLoadFromConfig_APIKeyEnvExpanded(t *testing.T) {
+	t.Setenv("TEST_OLLA_KEY", "expanded-key")
+
+	repo := NewStaticEndpointRepository()
+	configs := []config.EndpointConfig{
+		{
+			Name:          "env-key-endpoint",
+			URL:           "http://localhost:11434",
+			Type:          "ollama",
+			APIKey:        "${TEST_OLLA_KEY}",
+			CheckInterval: 5 * time.Second,
+			CheckTimeout:  2 * time.Second,
+		},
+	}
+
+	if err := repo.LoadFromConfig(context.Background(), configs); err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+
+	endpoints, err := repo.GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll failed: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0].APIKey != "expanded-key" {
+		t.Fatalf("APIKey = %q, want %q", endpoints[0].APIKey, "expanded-key")
+	}
+}

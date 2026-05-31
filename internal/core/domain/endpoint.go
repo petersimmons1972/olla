@@ -25,6 +25,7 @@ type Endpoint struct {
 	ModelFilter             *FilterConfig
 	Name                    string
 	Type                    string `json:"type,omitempty"`
+	APIKey                  string `json:"-"`
 	Status                  EndpointStatus
 	URLString               string
 	HealthCheckPathString   string

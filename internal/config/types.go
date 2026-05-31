@@ -149,6 +149,7 @@ type EndpointConfig struct {
 	URL            string   `yaml:"url"`
 	Name           string   `yaml:"name"`
 	Type           string   `yaml:"type"`
+	APIKey         string   `yaml:"api_key,omitempty"`
 	HealthCheckURL string   `yaml:"health_check_url"`
 	ModelURL       string   `yaml:"model_url"`
 	Capabilities   []string `yaml:"capabilities,omitempty"`

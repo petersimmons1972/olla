@@ -232,13 +232,6 @@ func (p *FCDiscoveryPoller) fcEntriesToEndpointConfigs(entries []fcRegistryEntry
 					"olla_endpoint_type", model.OllaEndpointType)
 				continue
 			}
-			if endpointType != "" && !p.repo.profileFactory.ValidateProfileType(endpointType) {
-				p.logger.Warn("fc-discovery: skipping endpoint with unsupported profile type",
-					"host", entry.Host,
-					"model", model.Name,
-					"type", endpointType)
-				continue
-			}
 			priority := defaultPriority
 			if model.Priority != 0 {
 				priority = model.Priority

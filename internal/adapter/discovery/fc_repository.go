@@ -62,11 +62,12 @@ type FCDiscoveryPoller struct {
 
 // NewFCDiscoveryPoller creates a poller that syncs Olla endpoints from FC /registry.
 // registryBaseURL is the FC service base URL, e.g. http://ai-fleet-controller.ai-fleet.svc.cluster.local.
-func NewFCDiscoveryPoller(repo *StaticEndpointRepository, registryBaseURL string, log logger.StyledLogger) *FCDiscoveryPoller {
+func NewFCDiscoveryPoller(repo *StaticEndpointRepository, modelRegistry domain.ModelRegistry, registryBaseURL string, log logger.StyledLogger) *FCDiscoveryPoller {
 	return &FCDiscoveryPoller{
-		repo:        repo,
-		registryURL: registryBaseURL + "/registry",
-		logger:      log,
+		repo:          repo,
+		modelRegistry: modelRegistry,
+		registryURL:   registryBaseURL + "/registry",
+		logger:        log,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -79,9 +80,7 @@ func NewFCDiscoveryPoller(repo *StaticEndpointRepository, registryBaseURL string
 // routing decisions available immediately after the first poll, rather than waiting
 // for the periodic ModelDiscoveryService cycle to populate the registry.
 func NewFCDiscoveryPollerWithRegistry(repo *StaticEndpointRepository, modelRegistry domain.ModelRegistry, registryBaseURL string, log logger.StyledLogger) *FCDiscoveryPoller {
-	p := NewFCDiscoveryPoller(repo, registryBaseURL, log)
-	p.modelRegistry = modelRegistry
-	return p
+	return NewFCDiscoveryPoller(repo, modelRegistry, registryBaseURL, log)
 }
 
 // Poll fetches the FC registry and reconciles Olla's endpoint set.
@@ -118,7 +117,6 @@ func (p *FCDiscoveryPoller) Poll(ctx context.Context) error {
 	if err := p.repo.LoadFromConfig(ctx, configs); err != nil {
 		return fmt.Errorf("fc-discovery: load endpoint configs: %w", err)
 	}
-
 	p.logger.Info("fc-discovery: endpoint set reconciled from FC registry",
 		"endpoints", len(configs))
 

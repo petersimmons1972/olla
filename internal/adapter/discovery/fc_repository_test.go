@@ -83,7 +83,7 @@ func TestFCEndpointRepository_PollMixedPayloadSkipsUnrecognizedAndLoadsEmbedding
 	defer srv.Close()
 
 	repo := discovery.NewStaticEndpointRepository()
-	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+	poller := discovery.NewFCDiscoveryPoller(repo, nil, srv.URL, newTestLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -157,7 +157,8 @@ func TestFCEndpointRepository_PollConvertsRegistryToEndpoints(t *testing.T) {
 	defer srv.Close()
 
 	repo := discovery.NewStaticEndpointRepository()
-	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+	modelRegistry := registry.NewMemoryModelRegistry(newTestLogger())
+	poller := discovery.NewFCDiscoveryPoller(repo, modelRegistry, srv.URL, newTestLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -190,6 +191,14 @@ func TestFCEndpointRepository_PollConvertsRegistryToEndpoints(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected endpoint with URL %q but not found", wantURL)
+	}
+
+	models, err := modelRegistry.GetModelsForEndpoint(ctx, wantURL)
+	if err != nil {
+		t.Fatalf("GetModelsForEndpoint() returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].Name != "qwen3-32b-vllm" {
+		t.Fatalf("expected qwen3-32b-vllm at %s, got %#v", wantURL, models)
 	}
 }
 
@@ -233,7 +242,8 @@ func TestFCEndpointRepository_PollRemovesStaleEndpoints(t *testing.T) {
 	defer srv.Close()
 
 	repo := discovery.NewStaticEndpointRepository()
-	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+	modelRegistry := registry.NewMemoryModelRegistry(newTestLogger())
+	poller := discovery.NewFCDiscoveryPoller(repo, modelRegistry, srv.URL, newTestLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -263,6 +273,10 @@ func TestFCEndpointRepository_PollRemovesStaleEndpoints(t *testing.T) {
 	if len(all) == 1 && all[0].URLString != "http://oblivion.petersimmons.com:8000" {
 		t.Errorf("expected oblivion endpoint, got %q", all[0].URLString)
 	}
+
+	if stale, _ := modelRegistry.GetModelsForEndpoint(ctx, "http://precision.petersimmons.com:8005"); len(stale) != 0 {
+		t.Errorf("expected stale precision models removed, got %d", len(stale))
+	}
 }
 
 // TestFCEndpointRepository_PollFailOpenOnFCUnavailable verifies that when FC is
@@ -283,7 +297,8 @@ func TestFCEndpointRepository_PollFailOpenOnFCUnavailable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	srv.Close()
 
-	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+	modelRegistry := registry.NewMemoryModelRegistry(newTestLogger())
+	poller := discovery.NewFCDiscoveryPoller(repo, modelRegistry, srv.URL, newTestLogger())
 
 	// Poll to an unavailable FC — should not error fatally, should preserve existing endpoints
 	err := poller.Poll(ctx)
@@ -328,7 +343,7 @@ func TestFCEndpointRepository_PollPreservesFleetEndpointMetadata(t *testing.T) {
 	defer srv.Close()
 
 	repo := discovery.NewStaticEndpointRepository()
-	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+	poller := discovery.NewFCDiscoveryPoller(repo, nil, srv.URL, newTestLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -527,7 +542,7 @@ func TestFCEndpointRepository_PollPreservesCapabilities(t *testing.T) {
 	defer srv.Close()
 
 	repo := discovery.NewStaticEndpointRepository()
-	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+	poller := discovery.NewFCDiscoveryPoller(repo, nil, srv.URL, newTestLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -572,7 +587,7 @@ func TestFCEndpointRepository_PollNoCapabilitiesIsNil(t *testing.T) {
 	defer srv.Close()
 
 	repo := discovery.NewStaticEndpointRepository()
-	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+	poller := discovery.NewFCDiscoveryPoller(repo, nil, srv.URL, newTestLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -716,7 +731,7 @@ func TestFCEndpointRepository_VLLMAndOpenAICompatibleTypesAccepted(t *testing.T)
 		t.Fatalf("NewFactory(\"\") error: %v", err)
 	}
 	repo := discovery.NewStaticEndpointRepositoryWithFactory(builtinFactory)
-	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+	poller := discovery.NewFCDiscoveryPoller(repo, nil, srv.URL, newTestLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

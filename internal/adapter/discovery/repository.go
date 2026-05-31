@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
@@ -174,6 +175,7 @@ func (r *StaticEndpointRepository) LoadFromConfig(ctx context.Context, configs [
 			Name:                    cfg.Name,
 			URL:                     endpointURL,
 			Type:                    cfg.Type,
+			APIKey:                  os.ExpandEnv(cfg.APIKey),
 			Capabilities:            cfg.Capabilities,
 			Priority:                *cfg.Priority,
 			HealthCheckURL:          healthCheckURL,

@@ -60,6 +60,9 @@ const (
 
 	// Circuit breaker threshold higher than health checker for tolerance.
 	proxyCircuitBreakerThreshold = 5 // vs health.DefaultCircuitBreakerThreshold (3)
+
+	// stateOpen is the circuit breaker open state name, used in comparisons and logging.
+	stateOpen = "open"
 )
 
 // Service implements the Olla proxy - optimised for high performance and resilience
@@ -340,7 +343,7 @@ func (cb *circuitBreaker) GetState() domain.CircuitBreakerState {
 	if lastFailureNs > 0 {
 		lastFailure := time.Unix(0, lastFailureNs)
 		lastTrip = &lastFailure
-		if state == "open" {
+		if state == stateOpen {
 			remaining := time.Until(lastFailure.Add(cb.timeout))
 			if remaining > 0 {
 				cooldownRemainingSec = int(remaining.Seconds())
@@ -361,7 +364,7 @@ func (cb *circuitBreaker) stateName() string {
 	case 0:
 		return "closed"
 	case 1:
-		return "open"
+		return stateOpen
 	case 2:
 		return "half-open"
 	default:
@@ -512,7 +515,7 @@ func (s *Service) handleSuccessfulResponse(ctx context.Context, w http.ResponseW
 	if stateBefore != 0 && stateAfter == 0 {
 		rlog.Info("Circuit breaker closed after successful request",
 			"endpoint", endpoint.Name,
-			"previous_state", map[int64]string{1: "open", 2: "half-open"}[stateBefore])
+			"previous_state", map[int64]string{1: stateOpen, 2: "half-open"}[stateBefore])
 	}
 
 	rlog.Debug("round-trip success", "status", resp.StatusCode)

@@ -505,3 +505,78 @@ func TestFCEndpointRepository_PollNoCapabilitiesIsNil(t *testing.T) {
 		t.Fatalf("Capabilities = %#v, want nil", all[0].Capabilities)
 	}
 }
+
+// TestFCEndpointRepository_PollRegistersMultipleModelsSameEndpoint verifies that
+// when FC reports two models on the SAME host:port, BOTH are registered in the
+// model registry after sync. Because MemoryModelRegistry.RegisterModels replaces
+// the full model list for a URL, models on the same endpoint must be grouped into
+// a single RegisterModels call — otherwise the second clobbers the first
+// (petersimmons1972/olla#4).
+func TestFCEndpointRepository_PollRegistersMultipleModelsSameEndpoint(t *testing.T) {
+	entries := []FCRegistryEntry{
+		{
+			Host: "oblivion.petersimmons.com",
+			Models: []FCModelSpec{
+				{Name: "qwen3-coder-30b", Framework: "vllm", Port: 8000},
+				{Name: "BAAI/bge-m3", Framework: "infinity", Port: 8000},
+			},
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	repo := discovery.NewStaticEndpointRepository()
+	modelReg := registry.NewMemoryModelRegistry(newTestLogger())
+	poller := discovery.NewFCDiscoveryPollerWithRegistry(repo, modelReg, srv.URL, newTestLogger())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("Poll() returned error: %v", err)
+	}
+
+	wantURL := "http://oblivion.petersimmons.com:8000"
+
+	// Both models must be retrievable on the shared endpoint (no clobber).
+	qwen, err := modelReg.GetEndpointsForModel(ctx, "qwen3-coder-30b")
+	if err != nil {
+		t.Fatalf("GetEndpointsForModel(qwen3) error: %v", err)
+	}
+	if len(qwen) != 1 || qwen[0] != wantURL {
+		t.Errorf("qwen3-coder-30b: expected [%q], got %v", wantURL, qwen)
+	}
+
+	bge, err := modelReg.GetEndpointsForModel(ctx, "BAAI/bge-m3")
+	if err != nil {
+		t.Fatalf("GetEndpointsForModel(bge) error: %v", err)
+	}
+	if len(bge) != 1 || bge[0] != wantURL {
+		t.Errorf("BAAI/bge-m3: expected [%q], got %v (second model clobbered first?)", wantURL, bge)
+	}
+
+	// The endpoint→model map must list BOTH models for the shared URL.
+	emap, err := modelReg.GetEndpointModelMap(ctx)
+	if err != nil {
+		t.Fatalf("GetEndpointModelMap() error: %v", err)
+	}
+	em, ok := emap[wantURL]
+	if !ok {
+		t.Fatalf("expected URL %q present in endpoint model map", wantURL)
+	}
+	if len(em.Models) != 2 {
+		names := make([]string, 0, len(em.Models))
+		for _, m := range em.Models {
+			names = append(names, m.Name)
+		}
+		t.Errorf("expected 2 models on %q, got %d: %v", wantURL, len(em.Models), names)
+	}
+}

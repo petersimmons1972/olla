@@ -58,7 +58,7 @@ func (s *DiscoveryStrategy) GetRoutableEndpoints(
 					"rejected",
 					0,
 					modelEndpoints,
-					fmt.Errorf("no healthy endpoints for embeddings-capable requests"),
+					errors.New("no healthy endpoints for embeddings-capable requests"),
 				)
 		}
 	}

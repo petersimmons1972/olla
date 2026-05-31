@@ -135,11 +135,12 @@ func (p *FCDiscoveryPoller) Poll(ctx context.Context) error {
 // cleared and re-written on every successful poll to evict stale entries.
 func (p *FCDiscoveryPoller) syncModelsToRegistry(ctx context.Context, entries []fcRegistryEntry) {
 	// Build the desired set of endpointURL→[]modelName from the fresh FC payload.
-	type endpointModels struct {
-		url    string
-		models []*domain.ModelInfo
-	}
-	var desired []endpointModels
+	// Group ALL models that share the same host:port under one URL: the model
+	// registry's RegisterModels replaces the full model list for a URL, so two
+	// models on the same endpoint must be registered together or the second
+	// clobbers the first (petersimmons1972/olla#4).
+	desiredByURL := make(map[string][]*domain.ModelInfo)
+	var desiredURLOrder []string // preserve first-seen order for stable logging/registration
 
 	for _, entry := range entries {
 		for _, model := range entry.Models {
@@ -147,12 +148,10 @@ func (p *FCDiscoveryPoller) syncModelsToRegistry(ctx context.Context, entries []
 				continue
 			}
 			endpointURL := "http://" + net.JoinHostPort(entry.Host, strconv.Itoa(model.Port))
-			desired = append(desired, endpointModels{
-				url: endpointURL,
-				models: []*domain.ModelInfo{
-					{Name: model.Name},
-				},
-			})
+			if _, seen := desiredByURL[endpointURL]; !seen {
+				desiredURLOrder = append(desiredURLOrder, endpointURL)
+			}
+			desiredByURL[endpointURL] = append(desiredByURL[endpointURL], &domain.ModelInfo{Name: model.Name})
 		}
 	}
 
@@ -163,13 +162,8 @@ func (p *FCDiscoveryPoller) syncModelsToRegistry(ctx context.Context, entries []
 	if err != nil {
 		p.logger.Warn("fc-discovery: could not fetch current model map for eviction, skipping stale cleanup", "error", err)
 	} else {
-		// Build the desired URL set for fast lookup
-		desiredURLs := make(map[string]struct{}, len(desired))
-		for _, em := range desired {
-			desiredURLs[em.url] = struct{}{}
-		}
 		for url := range currentMap {
-			if _, ok := desiredURLs[url]; !ok {
+			if _, ok := desiredByURL[url]; !ok {
 				if err := p.modelRegistry.RemoveEndpoint(ctx, url); err != nil {
 					p.logger.Warn("fc-discovery: failed to evict stale model endpoint", "url", url, "error", err)
 				}
@@ -177,15 +171,16 @@ func (p *FCDiscoveryPoller) syncModelsToRegistry(ctx context.Context, entries []
 		}
 	}
 
-	// Register/refresh the desired endpoint→model mappings.
-	for _, em := range desired {
-		if err := p.modelRegistry.RegisterModels(ctx, em.url, em.models); err != nil {
-			p.logger.Warn("fc-discovery: failed to pre-register model", "url", em.url, "error", err)
+	// Register/refresh the desired endpoint→model mappings, one call per unique
+	// URL with the FULL model list so co-located models do not clobber each other.
+	for _, url := range desiredURLOrder {
+		if err := p.modelRegistry.RegisterModels(ctx, url, desiredByURL[url]); err != nil {
+			p.logger.Warn("fc-discovery: failed to pre-register models", "url", url, "error", err)
 		}
 	}
 
 	p.logger.Debug("fc-discovery: pre-registered FC models in model registry",
-		"endpoints", len(desired))
+		"endpoints", len(desiredURLOrder))
 }
 
 // RunLoop starts a background polling loop. It polls immediately on first call, then

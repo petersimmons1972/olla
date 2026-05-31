@@ -58,3 +58,34 @@ func TestDiscoveryStrategy_NoCapabilityRequirementUnfiltered(t *testing.T) {
 	assert.Equal(t, "routed", string(decision.Action))
 	assert.Equal(t, 2, len(result))
 }
+
+// TestDiscoveryStrategy_EmbeddingsNoCapableEndpoint verifies the 503 path: an
+// embeddings request where ALL healthy endpoints lack the "embeddings" capability
+// is rejected with RoutingReasonNoCapableEndpoint and a non-nil error.
+func TestDiscoveryStrategy_EmbeddingsNoCapableEndpoint(t *testing.T) {
+	ctx := context.WithValue(context.Background(), constants.ContextModelCapabilitiesKey, &domain.ModelCapabilities{
+		Embeddings: true,
+	})
+
+	healthyEndpoints := []*domain.Endpoint{
+		{Name: "chat", URLString: "http://chat", Capabilities: []string{"chat"}},
+		{Name: "vision", URLString: "http://vision", Capabilities: []string{"vision"}},
+	}
+	modelEndpoints := []string{"http://chat", "http://vision"}
+
+	strategy := &DiscoveryStrategy{
+		options: config.ModelRoutingStrategyOptions{
+			DiscoveryRefreshOnMiss: true,
+		},
+		logger:         createTestLogger(),
+		strictFallback: NewStrictStrategy(createTestLogger()),
+	}
+
+	result, decision, err := strategy.GetRoutableEndpoints(ctx, "test-model", healthyEndpoints, modelEndpoints)
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.NotNil(t, decision)
+	assert.Equal(t, "rejected", string(decision.Action))
+	assert.Equal(t, constants.RoutingReasonNoCapableEndpoint, decision.Reason)
+}

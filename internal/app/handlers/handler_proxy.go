@@ -478,6 +478,9 @@ func (a *Application) filterEndpointsByProfile(endpoints []*domain.Endpoint, pro
 	// stage 3: specific model filtering using routing strategy
 	if profile != nil && profile.ModelName != "" && a.modelRegistry != nil {
 		ctx := context.Background()
+		if profile.ModelCapabilities != nil {
+			ctx = context.WithValue(ctx, constants.ContextModelCapabilitiesKey, profile.ModelCapabilities)
+		}
 
 		// aliases map one name to multiple backend-specific models, so they
 		// need dedicated resolution rather than the standard single-model path

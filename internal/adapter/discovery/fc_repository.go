@@ -19,15 +19,16 @@ import (
 // fcModelSpec mirrors the Flight Controller ModelSpec fields we care about for
 // building Olla endpoint configs. Only Name and Port are required for routing.
 type fcModelSpec struct {
-	Name                    string `json:"name"`
-	Framework               string `json:"framework"`
-	EndpointType            string `json:"endpointType,omitempty"`
-	HealthCheckURL          string `json:"healthCheckURL,omitempty"`
-	ModelURL                string `json:"modelURL,omitempty"`
-	CircuitBreakerTimeout   string `json:"circuitBreakerTimeout,omitempty"`
-	Port                    int    `json:"port"`
-	Priority                int    `json:"priority,omitempty"`
-	CircuitBreakerThreshold int    `json:"circuitBreakerThreshold,omitempty"`
+	Name                    string   `json:"name"`
+	Framework               string   `json:"framework"`
+	EndpointType            string   `json:"endpointType,omitempty"`
+	HealthCheckURL          string   `json:"healthCheckURL,omitempty"`
+	ModelURL                string   `json:"modelURL,omitempty"`
+	CircuitBreakerTimeout   string   `json:"circuitBreakerTimeout,omitempty"`
+	Port                    int      `json:"port"`
+	Priority                int      `json:"priority,omitempty"`
+	CircuitBreakerThreshold int      `json:"circuitBreakerThreshold,omitempty"`
+	Capabilities            []string `json:"capabilities,omitempty"`
 }
 
 // fcRegistryEntry mirrors the Flight Controller RegistryEntry type returned by
@@ -235,6 +236,7 @@ func fcEntriesToEndpointConfigs(entries []fcRegistryEntry) []config.EndpointConf
 				Name:                    fmt.Sprintf("%s-%s", entry.Host, model.Name),
 				Type:                    fcEndpointType(model),
 				Priority:                &priority,
+				Capabilities:            model.Capabilities,
 				HealthCheckURL:          model.HealthCheckURL,
 				ModelURL:                model.ModelURL,
 				CircuitBreakerTimeout:   cbTimeout,

@@ -21,15 +21,16 @@ type FCRegistryEntry struct {
 }
 
 type FCModelSpec struct {
-	Name                    string `json:"name"`
-	Framework               string `json:"framework,omitempty"`
-	EndpointType            string `json:"endpointType,omitempty"`
-	HealthCheckURL          string `json:"healthCheckURL,omitempty"`
-	ModelURL                string `json:"modelURL,omitempty"`
-	CircuitBreakerTimeout   string `json:"circuitBreakerTimeout,omitempty"`
-	Port                    int    `json:"port"`
-	Priority                int    `json:"priority,omitempty"`
-	CircuitBreakerThreshold int    `json:"circuitBreakerThreshold,omitempty"`
+	Name                    string   `json:"name"`
+	Framework               string   `json:"framework,omitempty"`
+	EndpointType            string   `json:"endpointType,omitempty"`
+	HealthCheckURL          string   `json:"healthCheckURL,omitempty"`
+	ModelURL                string   `json:"modelURL,omitempty"`
+	CircuitBreakerTimeout   string   `json:"circuitBreakerTimeout,omitempty"`
+	Port                    int      `json:"port"`
+	Priority                int      `json:"priority,omitempty"`
+	CircuitBreakerThreshold int      `json:"circuitBreakerThreshold,omitempty"`
+	Capabilities            []string `json:"capabilities,omitempty"`
 }
 
 func newTestLogger() logger.StyledLogger {
@@ -411,5 +412,96 @@ func TestFCEndpointRepository_PollClearsStaleModelsOnRepoll(t *testing.T) {
 	bgeEndpoints, _ := modelReg.GetEndpointsForModel(ctx, "BAAI/bge-m3")
 	if len(bgeEndpoints) != 1 {
 		t.Errorf("after second poll: expected 1 endpoint for BAAI/bge-m3, got %d", len(bgeEndpoints))
+	}
+}
+
+func TestFCEndpointRepository_PollPreservesCapabilities(t *testing.T) {
+	entries := []FCRegistryEntry{
+		{
+			Host: "precision.petersimmons.com",
+			Models: []FCModelSpec{
+				{
+					Name:         "nomic-embed-text",
+					Capabilities: []string{"embeddings"},
+					Port:         11434,
+				},
+			},
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	repo := discovery.NewStaticEndpointRepository()
+	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("Poll() returned error: %v", err)
+	}
+
+	all, err := repo.GetAll(ctx)
+	if err != nil {
+		t.Fatalf("GetAll() returned error: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(all))
+	}
+	if got := all[0].Capabilities; len(got) != 1 || got[0] != "embeddings" {
+		t.Fatalf("Capabilities = %#v, want [\"embeddings\"]", got)
+	}
+}
+
+func TestFCEndpointRepository_PollNoCapabilitiesIsNil(t *testing.T) {
+	entries := []FCRegistryEntry{
+		{
+			Host: "precision.petersimmons.com",
+			Models: []FCModelSpec{
+				{
+					Name: "llama-3-70b",
+					Port: 11434,
+				},
+			},
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	repo := discovery.NewStaticEndpointRepository()
+	poller := discovery.NewFCDiscoveryPoller(repo, srv.URL, newTestLogger())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("Poll() returned error: %v", err)
+	}
+
+	all, err := repo.GetAll(ctx)
+	if err != nil {
+		t.Fatalf("GetAll() returned error: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(all))
+	}
+	if all[0].Capabilities != nil {
+		t.Fatalf("Capabilities = %#v, want nil", all[0].Capabilities)
 	}
 }

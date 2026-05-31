@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/thushan/olla/internal/config"
@@ -43,6 +44,25 @@ func (s *DiscoveryStrategy) GetRoutableEndpoints(
 	healthyEndpoints []*domain.Endpoint,
 	modelEndpoints []string,
 ) ([]*domain.Endpoint, *domain.ModelRoutingDecision, error) {
+	if caps := modelCapabilitiesFromContext(ctx); caps != nil && caps.Embeddings {
+		healthyEndpoints = filterEndpointsByCapability(healthyEndpoints, "embeddings")
+
+		if len(healthyEndpoints) == 0 {
+			return nil, ports.NewRoutingDecision(
+					s.Name(),
+					ports.RoutingActionRejected,
+					constants.RoutingReasonNoCapableEndpoint,
+				), domain.NewModelRoutingError(
+					modelName,
+					s.Name(),
+					"rejected",
+					0,
+					modelEndpoints,
+					fmt.Errorf("no healthy endpoints for embeddings-capable requests"),
+				)
+		}
+	}
+
 	// first check if we already have healthy endpoints with the model
 	modelEndpointMap := make(map[string]bool)
 	for _, url := range modelEndpoints {
@@ -246,4 +266,37 @@ func (s *DiscoveryStrategy) GetRoutableEndpoints(
 			constants.RoutingReasonAllHealthyAfterDiscovery,
 		), nil
 	}
+
+}
+
+func filterEndpointsByCapability(endpoints []*domain.Endpoint, capability string) []*domain.Endpoint {
+	if len(endpoints) == 0 {
+		return endpoints
+	}
+
+	filtered := make([]*domain.Endpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		for _, ecap := range endpoint.Capabilities {
+			if strings.EqualFold(ecap, capability) {
+				filtered = append(filtered, endpoint)
+				break
+			}
+		}
+	}
+
+	return filtered
+}
+
+func modelCapabilitiesFromContext(ctx context.Context) *domain.ModelCapabilities {
+	if ctx == nil {
+		return nil
+	}
+
+	if raw := ctx.Value(constants.ContextModelCapabilitiesKey); raw != nil {
+		if caps, ok := raw.(*domain.ModelCapabilities); ok {
+			return caps
+		}
+	}
+
+	return nil
 }

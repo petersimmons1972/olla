@@ -1,3 +1,17 @@
+---
+project: olla-fork
+purpose: Fork of the Olla LLM proxy/load balancer — custom patches for model alias enforcement and nil-panic fixes.
+stack: [go]
+status: active
+entrypoints:
+  - main.go
+  - olla/
+  - internal/
+storage: Config via config/ directory; Docker Compose for local runs
+related: [aifleet]
+notes: Upstream is github.com/thushan/olla. Local patches tracked via PRs against this fork.
+---
+
 # CLAUDE.md
 
 ## Overview

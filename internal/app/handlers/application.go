@@ -15,6 +15,7 @@ import (
 	"github.com/thushan/olla/internal/adapter/translator/anthropic"
 	"github.com/thushan/olla/internal/app/middleware"
 	"github.com/thushan/olla/internal/config"
+	"github.com/thushan/olla/internal/core/constants"
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/core/ports"
 	"github.com/thushan/olla/internal/logger"
@@ -38,13 +39,15 @@ func (s *SecurityAdapters) CreateChainMiddleware() func(http.Handler) http.Handl
 			if s.securityChain != nil {
 				// Create security request from HTTP request
 				secReq := ports.SecurityRequest{
-					ClientID:      r.RemoteAddr, // This would normally be extracted better
-					Endpoint:      r.URL.Path,
-					Method:        r.Method,
-					BodySize:      r.ContentLength,
-					HeaderSize:    0, // Would need to calculate
-					Headers:       r.Header,
-					IsHealthCheck: r.URL.Path == "/internal/health",
+					ClientID:   r.RemoteAddr, // This would normally be extracted better
+					Endpoint:   r.URL.Path,
+					Method:     r.Method,
+					BodySize:   r.ContentLength,
+					HeaderSize: 0, // Would need to calculate
+					Headers:    r.Header,
+					IsHealthCheck: r.URL.Path == constants.DefaultHealthCheckEndpoint ||
+						r.URL.Path == constants.DefaultLivenessEndpoint ||
+						r.URL.Path == constants.DefaultReadinessEndpoint,
 				}
 
 				result, err := s.securityChain.Validate(r.Context(), secReq)
@@ -89,6 +92,7 @@ type Application struct {
 	// closure so the handler layer does not need to import the balancer package.
 	stickyStatsFn func() *balancer.StickyStats
 	aliasResolver *registry.AliasResolver
+	allowedModels map[string]struct{}
 	server        *http.Server
 	errCh         chan error
 	StartTime     time.Time
@@ -171,6 +175,10 @@ func NewApplication(
 	if aliasResolver != nil {
 		logger.Info("Model aliases configured", "alias_count", len(cfg.ModelAliases))
 	}
+	allowedModels := makeAllowedModelSet(cfg.AllowedModels)
+	if len(allowedModels) > 0 {
+		logger.Info("Model allowlist configured", "model_count", len(allowedModels))
+	}
 
 	// Use profile factory directly as it implements the ProfileLookup interface
 	// The Factory.GetAnthropicSupport method provides the required functionality
@@ -192,6 +200,7 @@ func NewApplication(
 		converterFactory:   converter.NewConverterFactory(),
 		translatorRegistry: translatorRegistry,
 		aliasResolver:      aliasResolver,
+		allowedModels:      allowedModels,
 		server:             server,
 		errCh:              make(chan error, 1),
 		StartTime:          time.Now(),

@@ -436,6 +436,39 @@ func TestStaticEndpointRepository_LoadFromConfig(t *testing.T) {
 	}
 }
 
+func TestStaticEndpointRepository_LoadFromConfig_CircuitBreakerOverrides(t *testing.T) {
+	repo := NewStaticEndpointRepository()
+	cfg := config.EndpointConfig{
+		Name:                    "slow-vllm",
+		URL:                     "http://localhost:8000",
+		Type:                    "ollama",
+		Priority:                ptrInt(100),
+		CheckInterval:           5 * time.Second,
+		CheckTimeout:            2 * time.Second,
+		CircuitBreakerTimeout:   2000 * time.Second,
+		CircuitBreakerThreshold: 7,
+	}
+
+	err := repo.LoadFromConfig(context.Background(), []config.EndpointConfig{cfg})
+	if err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+
+	endpoints, err := repo.GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll failed: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0].CircuitBreakerTimeout != 2000*time.Second {
+		t.Fatalf("CircuitBreakerTimeout = %v, want 2000s", endpoints[0].CircuitBreakerTimeout)
+	}
+	if endpoints[0].CircuitBreakerThreshold != 7 {
+		t.Fatalf("CircuitBreakerThreshold = %d, want 7", endpoints[0].CircuitBreakerThreshold)
+	}
+}
+
 func TestStaticEndpointRepository_EmptyConfig(t *testing.T) {
 	repo := NewStaticEndpointRepository()
 	ctx := context.Background()
@@ -952,5 +985,97 @@ func TestStaticEndpointRepository_EmptyURLs_WithNestedPath(t *testing.T) {
 	expectedModelURL := "http://localhost:12434/engines/ollama/api/tags"
 	if endpoint.ModelURLString != expectedModelURL {
 		t.Errorf("ModelURLString = %q, expected %q", endpoint.ModelURLString, expectedModelURL)
+	}
+}
+
+func TestLoadFromConfig_PreservesEndpointCapabilities(t *testing.T) {
+	repo := NewStaticEndpointRepository()
+	configs := []config.EndpointConfig{
+		{
+			Name:          "embedding-endpoint",
+			URL:           "http://localhost:11434",
+			Type:          "openai",
+			Capabilities:  []string{"embeddings"},
+			CheckInterval: 5 * time.Second,
+			CheckTimeout:  2 * time.Second,
+		},
+	}
+
+	if err := repo.LoadFromConfig(context.Background(), configs); err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+
+	endpoints, err := repo.GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll failed: %v", err)
+	}
+
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+
+	endpoint := endpoints[0]
+	if len(endpoint.Capabilities) != 1 || endpoint.Capabilities[0] != "embeddings" {
+		t.Fatalf("Capabilities = %#v, expected [\"embeddings\"]", endpoint.Capabilities)
+	}
+}
+
+func TestLoadFromConfig_APIKeyMapped(t *testing.T) {
+	repo := NewStaticEndpointRepository()
+	configs := []config.EndpointConfig{
+		{
+			Name:          "static-key-endpoint",
+			URL:           "http://localhost:11434",
+			Type:          "ollama",
+			APIKey:        "static-key",
+			CheckInterval: 5 * time.Second,
+			CheckTimeout:  2 * time.Second,
+		},
+	}
+
+	if err := repo.LoadFromConfig(context.Background(), configs); err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+
+	endpoints, err := repo.GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll failed: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0].APIKey != "static-key" {
+		t.Fatalf("APIKey = %q, want %q", endpoints[0].APIKey, "static-key")
+	}
+}
+
+func TestLoadFromConfig_APIKeyEnvExpanded(t *testing.T) {
+	t.Setenv("TEST_OLLA_KEY", "expanded-key")
+
+	repo := NewStaticEndpointRepository()
+	configs := []config.EndpointConfig{
+		{
+			Name:          "env-key-endpoint",
+			URL:           "http://localhost:11434",
+			Type:          "ollama",
+			APIKey:        "${TEST_OLLA_KEY}",
+			CheckInterval: 5 * time.Second,
+			CheckTimeout:  2 * time.Second,
+		},
+	}
+
+	if err := repo.LoadFromConfig(context.Background(), configs); err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+
+	endpoints, err := repo.GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll failed: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0].APIKey != "expanded-key" {
+		t.Fatalf("APIKey = %q, want %q", endpoints[0].APIKey, "expanded-key")
 	}
 }

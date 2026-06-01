@@ -59,6 +59,7 @@ func TestProfileFilteringIntegration(t *testing.T) {
 				domain.ProfileOllama,
 				domain.ProfileOpenAICompatible,
 				domain.ProfileLlamaCpp,
+				domain.ProfileVLLM,
 			},
 		},
 		{

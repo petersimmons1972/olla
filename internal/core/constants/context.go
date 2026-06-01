@@ -26,4 +26,8 @@ const (
 	// when a model alias is resolved, allowing the proxy to rewrite the model name in the
 	// request body to match what the selected backend expects
 	ContextModelAliasMapKey = "model_alias_map"
+
+	// ContextModelCapabilitiesKey carries request model capability requirements from
+	// proxy inspection into routing for strategy-level capability pre-filters.
+	ContextModelCapabilitiesKey = contextKey("model_capabilities")
 )

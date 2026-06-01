@@ -19,6 +19,7 @@ const (
 	RoutingReasonModelUnavailableCompatibleOnly = "model_unavailable_compatible_only"
 	RoutingReasonModelUnavailableNoRefresh      = "model_unavailable_no_refresh"
 	RoutingReasonModelUnavailableAfterDiscovery = "model_unavailable_after_discovery"
+	RoutingReasonNoCapableEndpoint              = "no_capable_endpoint"
 
 	// Fallback scenarios (200 OK with fallback action)
 	RoutingReasonAllHealthyFallback       = "all_healthy_fallback"

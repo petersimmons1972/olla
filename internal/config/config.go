@@ -40,8 +40,11 @@ var DefaultLocalNetworkTrustedCIDRs = []string{
 	"192.168.0.0/16",
 }
 
+var DefaultAllowedModels = []string{}
+
 func DefaultConfig() *Config {
 	return &Config{
+		AllowedModels: append([]string(nil), DefaultAllowedModels...),
 		Server: ServerConfig{
 			Host:            DefaultHost,
 			Port:            DefaultPort,
@@ -114,7 +117,7 @@ func DefaultConfig() *Config {
 			RoutingStrategy: ModelRoutingStrategy{
 				Type: "strict", // default to strict for predictable behavior
 				Options: ModelRoutingStrategyOptions{
-					DiscoveryRefreshOnMiss: false,
+					DiscoveryRefreshOnMiss: true,
 					DiscoveryTimeout:       2 * time.Second,
 					FallbackBehavior:       constants.FallbackBehaviorCompatibleOnly,
 				},
@@ -138,7 +141,9 @@ func DefaultConfig() *Config {
 			Output: "stdout",
 		},
 		Engineering: EngineeringConfig{
-			ShowNerdStats: false,
+			ShowNerdStats:                        false,
+			EndpointDegradedSuccessRateThreshold: 80.0,
+			EndpointDegradedMinimumRequests:      10,
 		},
 		Translators: TranslatorsConfig{
 			Anthropic: AnthropicTranslatorConfig{
@@ -194,6 +199,9 @@ func (c *Config) Validate() error {
 	if err := c.Translators.Validate(); err != nil {
 		return fmt.Errorf("translators config invalid: %w", err)
 	}
+	if err := c.ValidateAllowedModels(); err != nil {
+		return fmt.Errorf("allowed_models invalid: %w", err)
+	}
 
 	return nil
 }
@@ -216,6 +224,9 @@ func Load(flagConfigFile ...string) (*Config, error) {
 
 	for _, path := range configPaths {
 		if data, err := os.ReadFile(path); err == nil {
+			if err := validateConfigFileSchema(data); err != nil {
+				return nil, fmt.Errorf("failed to validate %s: %w", path, err)
+			}
 			if err := yaml.Unmarshal(data, config); err != nil {
 				return nil, fmt.Errorf("failed to parse %s: %w", path, err)
 			}
@@ -244,6 +255,31 @@ func Load(flagConfigFile ...string) (*Config, error) {
 	}
 
 	return config, nil
+}
+
+func validateConfigFileSchema(data []byte) error {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return err
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil
+	}
+
+	var problems []string
+	root := doc.Content[0]
+	for i := 0; i < len(root.Content); i += 2 {
+		switch root.Content[i].Value {
+		case "model_discovery":
+			problems = append(problems, "model_discovery must be configured as discovery.model_discovery")
+		case "routing_strategy":
+			problems = append(problems, "routing_strategy must be configured as model_registry.routing_strategy")
+		}
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
 }
 
 func ApplyConfigCaches(config *Config) {

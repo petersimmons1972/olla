@@ -2,6 +2,8 @@ package constants
 
 const (
 	DefaultHealthCheckEndpoint = "/internal/health"
+	DefaultReadinessEndpoint   = "/internal/ready"
+	DefaultLivenessEndpoint    = "/internal/live"
 	DefaultOllaProxyPathPrefix = "/olla/"
 	DefaultPathPrefix          = "/"
 

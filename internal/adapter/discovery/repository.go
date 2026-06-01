@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
@@ -178,23 +179,27 @@ func (r *StaticEndpointRepository) LoadFromConfig(ctx context.Context, configs [
 		}
 
 		newEndpoint := &domain.Endpoint{
-			Name:                  cfg.Name,
-			URL:                   endpointURL,
-			Type:                  cfg.Type,
-			Priority:              *cfg.Priority,
-			HealthCheckURL:        healthCheckURL,
-			ModelUrl:              modelURL,
-			ModelFilter:           cfg.ModelFilter,
-			CheckInterval:         cfg.CheckInterval,
-			CheckTimeout:          cfg.CheckTimeout,
-			Status:                domain.StatusUnknown,
-			URLString:             urlString,
-			HealthCheckPathString: healthCheckPath,
-			HealthCheckURLString:  healthCheckURLString,
-			ModelURLString:        modelURLString,
-			BackoffMultiplier:     1,
-			NextCheckTime:         now,
-			PreservePath:          cfg.PreservePath,
+			Name:                    cfg.Name,
+			URL:                     endpointURL,
+			Type:                    cfg.Type,
+			APIKey:                  os.ExpandEnv(cfg.APIKey),
+			Capabilities:            cfg.Capabilities,
+			Priority:                *cfg.Priority,
+			HealthCheckURL:          healthCheckURL,
+			ModelUrl:                modelURL,
+			ModelFilter:             cfg.ModelFilter,
+			CheckInterval:           cfg.CheckInterval,
+			CheckTimeout:            cfg.CheckTimeout,
+			CircuitBreakerTimeout:   cfg.CircuitBreakerTimeout,
+			CircuitBreakerThreshold: cfg.CircuitBreakerThreshold,
+			Status:                  domain.StatusUnknown,
+			URLString:               urlString,
+			HealthCheckPathString:   healthCheckPath,
+			HealthCheckURLString:    healthCheckURLString,
+			ModelURLString:          modelURLString,
+			BackoffMultiplier:       1,
+			NextCheckTime:           now,
+			PreservePath:            cfg.PreservePath,
 		}
 
 		if existing, exists := existingEndpoints[urlString]; exists {

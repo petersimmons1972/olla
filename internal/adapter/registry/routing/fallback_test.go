@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/thushan/olla/internal/config"
@@ -143,6 +144,42 @@ func TestDiscoveryStrategy_FallbackBehavior(t *testing.T) {
 		assert.Equal(t, healthyEndpoints, result)
 		assert.Equal(t, "fallback", string(decision.Action))
 	})
+
+	t.Run("rejects without panic when refresh is enabled but discovery service is nil", func(t *testing.T) {
+		strategy := &DiscoveryStrategy{
+			discovery: nil,
+			options: config.ModelRoutingStrategyOptions{
+				FallbackBehavior:       constants.FallbackBehaviorNone,
+				DiscoveryRefreshOnMiss: true,
+			},
+			logger:         testLogger,
+			strictFallback: NewStrictStrategy(testLogger),
+		}
+
+		result, decision, err := strategy.GetRoutableEndpoints(ctx, "test-model", healthyEndpoints, modelEndpoints)
+
+		assert.Nil(t, result)
+		assert.Equal(t, "rejected", string(decision.Action))
+		assert.Error(t, err)
+	})
+
+	t.Run("falls back without panic when discovery service is nil and fallback is all", func(t *testing.T) {
+		strategy := &DiscoveryStrategy{
+			discovery: nil,
+			options: config.ModelRoutingStrategyOptions{
+				FallbackBehavior:       constants.FallbackBehaviorAll,
+				DiscoveryRefreshOnMiss: true,
+			},
+			logger:         testLogger,
+			strictFallback: NewStrictStrategy(testLogger),
+		}
+
+		result, decision, err := strategy.GetRoutableEndpoints(ctx, "test-model", healthyEndpoints, modelEndpoints)
+
+		assert.NoError(t, err)
+		assert.Equal(t, healthyEndpoints, result)
+		assert.Equal(t, "fallback", string(decision.Action))
+	})
 }
 
 type mockDiscoveryForTest struct {
@@ -169,4 +206,90 @@ func (m *mockDiscoveryForTest) RefreshEndpoints(ctx context.Context) error {
 
 func (m *mockDiscoveryForTest) UpdateEndpointStatus(ctx context.Context, endpoint *domain.Endpoint) error {
 	return nil
+}
+
+// TestDiscoveryStrategy_NilPanicWithZeroModelEndpoints reproduces the nil-pointer panic
+// from petersimmons1972/olla#33 — when compatible_endpoints=0 (modelEndpoints is nil or
+// empty), GetRoutableEndpoints must return a clean result/error, never panic.
+// This scenario occurs in FC discovery cold-start before model discovery completes.
+func TestDiscoveryStrategy_NilPanicWithZeroModelEndpoints(t *testing.T) {
+	ctx := context.Background()
+	testLogger := createTestLogger()
+
+	healthyEndpoints := []*domain.Endpoint{
+		{Name: "fc-ep1", URLString: "http://oblivion.petersimmons.com:8003", Status: domain.StatusHealthy},
+	}
+
+	t.Run("nil model endpoints does not panic with discovery refresh on miss", func(t *testing.T) {
+		mockDiscovery := &mockDiscoveryForTest{
+			healthyEndpoints: healthyEndpoints,
+			shouldFail:       false,
+		}
+
+		strategy := &DiscoveryStrategy{
+			discovery: mockDiscovery,
+			options: config.ModelRoutingStrategyOptions{
+				FallbackBehavior:       constants.FallbackBehaviorCompatibleOnly,
+				DiscoveryRefreshOnMiss: true,
+				DiscoveryTimeout:       2 * time.Second,
+			},
+			logger:         testLogger,
+			strictFallback: NewStrictStrategy(testLogger),
+		}
+
+		// nil modelEndpoints simulates cold-start: no model registry entries yet
+		var nilModelEndpoints []string
+
+		// Must NOT panic — must return a well-formed decision
+		result, decision, _ := strategy.GetRoutableEndpoints(ctx, "BAAI/bge-m3", healthyEndpoints, nilModelEndpoints)
+
+		assert.Empty(t, result)
+		assert.NotNil(t, decision)
+	})
+
+	t.Run("empty model endpoints does not panic with nil discovery service", func(t *testing.T) {
+		strategy := &DiscoveryStrategy{
+			discovery: nil, // nil discovery — deployed image has no nil-guard for this
+			options: config.ModelRoutingStrategyOptions{
+				FallbackBehavior:       constants.FallbackBehaviorCompatibleOnly,
+				DiscoveryRefreshOnMiss: true,
+				DiscoveryTimeout:       2 * time.Second,
+			},
+			logger:         testLogger,
+			strictFallback: NewStrictStrategy(testLogger),
+		}
+
+		// Must NOT panic even with nil discovery
+		assert.NotPanics(t, func() {
+			result, decision, err := strategy.GetRoutableEndpoints(ctx, "BAAI/bge-m3", healthyEndpoints, []string{})
+			assert.Empty(t, result)
+			assert.NotNil(t, decision)
+			assert.Error(t, err)
+		})
+	})
+
+	t.Run("nil healthyEndpoints slice does not panic", func(t *testing.T) {
+		mockDiscovery := &mockDiscoveryForTest{
+			healthyEndpoints: nil, // post-discovery returns no healthy endpoints
+			shouldFail:       false,
+		}
+
+		strategy := &DiscoveryStrategy{
+			discovery: mockDiscovery,
+			options: config.ModelRoutingStrategyOptions{
+				FallbackBehavior:       constants.FallbackBehaviorNone,
+				DiscoveryRefreshOnMiss: true,
+				DiscoveryTimeout:       2 * time.Second,
+			},
+			logger:         testLogger,
+			strictFallback: NewStrictStrategy(testLogger),
+		}
+
+		assert.NotPanics(t, func() {
+			result, decision, err := strategy.GetRoutableEndpoints(ctx, "BAAI/bge-m3", nil, nil)
+			assert.Nil(t, result)
+			assert.NotNil(t, decision)
+			assert.Error(t, err)
+		})
+	})
 }

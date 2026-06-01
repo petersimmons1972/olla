@@ -3,8 +3,11 @@ package config
 import (
 	"os"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -48,6 +51,9 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Proxy.MaxRetries != 3 {
 		t.Errorf("Expected max retries 3, got %d", cfg.Proxy.MaxRetries)
+	}
+	if !cfg.ModelRegistry.RoutingStrategy.Options.DiscoveryRefreshOnMiss {
+		t.Error("Expected discovery refresh on miss to be enabled by default")
 	}
 
 	// Test engineering defaults
@@ -213,6 +219,45 @@ func TestConfigTypes(t *testing.T) {
 	// Test boolean fields
 	if cfg.Engineering.ShowNerdStats != false {
 		t.Error("ShowNerdStats should be disabled by default")
+	}
+}
+
+func TestConfigYAML_EndpointCircuitBreakerOverrides(t *testing.T) {
+	var cfg Config
+	data := `
+discovery:
+  type: "static"
+  static:
+    endpoints:
+      - url: "http://localhost:8000"
+        name: "oblivion-gb10-vllm"
+        type: "vllm"
+        priority: 100
+        health_check_url: "/health"
+        model_url: "/v1/models"
+        check_interval: 5s
+        check_timeout: 2s
+        circuit_breaker_timeout: 2000s
+        circuit_breaker_threshold: 7
+`
+
+	if err := yaml.Unmarshal([]byte(strings.TrimSpace(data)), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+
+	if len(cfg.Discovery.Static.Endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(cfg.Discovery.Static.Endpoints))
+	}
+
+	endpoint := cfg.Discovery.Static.Endpoints[0]
+	if endpoint.Name != "oblivion-gb10-vllm" {
+		t.Fatalf("endpoint.Name = %q, want oblivion-gb10-vllm", endpoint.Name)
+	}
+	if endpoint.CircuitBreakerTimeout != 2000*time.Second {
+		t.Fatalf("endpoint.CircuitBreakerTimeout = %v, want 2000s", endpoint.CircuitBreakerTimeout)
+	}
+	if endpoint.CircuitBreakerThreshold != 7 {
+		t.Fatalf("endpoint.CircuitBreakerThreshold = %d, want 7", endpoint.CircuitBreakerThreshold)
 	}
 }
 
@@ -944,6 +989,160 @@ func TestDefaultConfig_NoModelAliases(t *testing.T) {
 	cfg := DefaultConfig()
 	if cfg.ModelAliases != nil {
 		t.Error("expected nil ModelAliases in default config")
+	}
+}
+
+func TestDefaultConfig_AllowedModels(t *testing.T) {
+	cfg := DefaultConfig()
+	if len(cfg.AllowedModels) != 0 {
+		t.Fatalf("expected default allowed_models to allow all models, got %v", cfg.AllowedModels)
+	}
+}
+
+func TestLoadConfig_ExplicitAllowedModels(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "olla-allowed-models-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	configData := `
+allowed_models:
+  - qwen3-coder:30b
+  - BAAI/bge-m3
+`
+	if _, err := tmpFile.WriteString(strings.TrimSpace(configData)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	want := []string{"qwen3-coder:30b", "BAAI/bge-m3"}
+	if len(cfg.AllowedModels) != len(want) {
+		t.Fatalf("expected %d allowed models, got %d", len(want), len(cfg.AllowedModels))
+	}
+	for i := range want {
+		if cfg.AllowedModels[i] != want[i] {
+			t.Fatalf("AllowedModels[%d] = %q, want %q", i, cfg.AllowedModels[i], want[i])
+		}
+	}
+}
+
+func TestLoadConfig_RejectsMisplacedTopLevelModelSections(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "olla-misplaced-model-sections-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	configData := `
+model_discovery:
+  enabled: true
+routing_strategy:
+  type: optimistic
+`
+	if _, err := tmpFile.WriteString(strings.TrimSpace(configData)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Load(tmpFile.Name())
+	if err == nil {
+		t.Fatal("expected misplaced top-level model sections to fail validation")
+	}
+	if !stringContains(err.Error(), "model_discovery must be configured as discovery.model_discovery") {
+		t.Fatalf("error = %q, want model_discovery schema guidance", err.Error())
+	}
+	if !stringContains(err.Error(), "routing_strategy must be configured as model_registry.routing_strategy") {
+		t.Fatalf("error = %q, want routing_strategy schema guidance", err.Error())
+	}
+}
+
+func TestLoadConfig_NestedModelSections(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "olla-nested-model-sections-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	configData := `
+discovery:
+  model_discovery:
+    enabled: true
+    interval: 5m
+    timeout: 30s
+    concurrent_workers: 5
+model_registry:
+  routing_strategy:
+    type: optimistic
+    options:
+      fallback_behavior: compatible_only
+`
+	if _, err := tmpFile.WriteString(strings.TrimSpace(configData)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if !cfg.Discovery.ModelDiscovery.Enabled {
+		t.Fatal("expected deployed config to enable discovery.model_discovery")
+	}
+	if cfg.Discovery.ModelDiscovery.Interval != 5*time.Minute {
+		t.Fatalf("discovery.model_discovery.interval = %v, want 5m", cfg.Discovery.ModelDiscovery.Interval)
+	}
+	if cfg.ModelRegistry.RoutingStrategy.Type != "optimistic" {
+		t.Fatalf("model_registry.routing_strategy.type = %q, want optimistic", cfg.ModelRegistry.RoutingStrategy.Type)
+	}
+	if cfg.ModelRegistry.RoutingStrategy.Options.FallbackBehavior != "compatible_only" {
+		t.Fatalf("model_registry.routing_strategy.options.fallback_behavior = %q, want compatible_only", cfg.ModelRegistry.RoutingStrategy.Options.FallbackBehavior)
+	}
+}
+
+func TestValidateAllowedModels_RejectsBadEntries(t *testing.T) {
+	tests := []struct {
+		name          string
+		allowedModels []string
+		wantErr       string
+	}{
+		{
+			name:          "empty model",
+			allowedModels: []string{"qwen3-coder-30b", ""},
+			wantErr:       "empty model name",
+		},
+		{
+			name:          "leading whitespace",
+			allowedModels: []string{" qwen3-coder-30b"},
+			wantErr:       "leading/trailing whitespace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.AllowedModels = tt.allowedModels
+
+			err := cfg.ValidateAllowedModels()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !stringContains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
 	}
 }
 

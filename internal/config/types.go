@@ -27,6 +27,7 @@ type Config struct {
 	//       - gpt-oss-120b-MLX
 	//       - gguf_gpt_oss_120b.gguf
 	ModelAliases  map[string][]string `yaml:"model_aliases,omitempty"`
+	AllowedModels []string            `yaml:"allowed_models,omitempty"`
 	Logging       LoggingConfig       `yaml:"logging"`
 	Filename      string              `yaml:"-"`
 	Translators   TranslatorsConfig   `yaml:"translators"`
@@ -105,10 +106,22 @@ type ProxyConfig struct {
 
 // DiscoveryConfig holds service discovery configuration
 type DiscoveryConfig struct {
-	Type            string                `yaml:"type"` // Only "static" is implemented
+	Type            string                `yaml:"type"` // "static" or "fc"
 	Static          StaticDiscoveryConfig `yaml:"static"`
+	FC              FCDiscoveryConfig     `yaml:"fc"`
 	RefreshInterval time.Duration         `yaml:"refresh_interval"`
 	ModelDiscovery  ModelDiscoveryConfig  `yaml:"model_discovery"`
+}
+
+// FCDiscoveryConfig holds configuration for Flight Controller-based dynamic discovery.
+// When discovery.type is "fc", Olla polls the FC /registry endpoint and reconciles
+// its backend list on each tick (petersimmons1972/instinct#12).
+type FCDiscoveryConfig struct {
+	// RegistryURL is the base URL of the Flight Controller service, e.g.
+	// http://ai-fleet-controller.ai-fleet.svc.cluster.local
+	RegistryURL string `yaml:"registry_url"`
+	// PollInterval is how often Olla polls FC /registry. Default: 15s.
+	PollInterval time.Duration `yaml:"poll_interval"`
 }
 
 // ModelDiscoveryConfig holds model discvery specific settings
@@ -132,15 +145,23 @@ type EndpointConfig struct {
 	// Priority uses a pointer so nil means "omitted in config" rather than explicitly zero.
 	// This lets applyEndpointDefaults distinguish "user set 0" from "user said nothing",
 	// since 0 is a valid, lower-than-default priority value.
-	Priority       *int          `yaml:"priority"`
-	URL            string        `yaml:"url"`
-	Name           string        `yaml:"name"`
-	Type           string        `yaml:"type"`
-	HealthCheckURL string        `yaml:"health_check_url"`
-	ModelURL       string        `yaml:"model_url"`
-	CheckInterval  time.Duration `yaml:"check_interval"`
-	CheckTimeout   time.Duration `yaml:"check_timeout"`
-	PreservePath   bool          `yaml:"preserve_path"`
+	Priority       *int     `yaml:"priority"`
+	URL            string   `yaml:"url"`
+	Name           string   `yaml:"name"`
+	Type           string   `yaml:"type"`
+	APIKey         string   `yaml:"api_key,omitempty"`
+	HealthCheckURL string   `yaml:"health_check_url"`
+	ModelURL       string   `yaml:"model_url"`
+	Capabilities   []string `yaml:"capabilities,omitempty"`
+	// CircuitBreakerTimeout overrides the circuit breaker cooldown for this endpoint.
+	// Zero means use the global default.
+	CircuitBreakerTimeout time.Duration `yaml:"circuit_breaker_timeout,omitempty"`
+	// CircuitBreakerThreshold overrides the consecutive failure threshold for this endpoint.
+	// Zero means use the global default.
+	CircuitBreakerThreshold int           `yaml:"circuit_breaker_threshold,omitempty"`
+	CheckInterval           time.Duration `yaml:"check_interval"`
+	CheckTimeout            time.Duration `yaml:"check_timeout"`
+	PreservePath            bool          `yaml:"preserve_path"`
 }
 
 // LoggingConfig holds logging configuration
@@ -152,7 +173,9 @@ type LoggingConfig struct {
 
 // EngineeringConfig holds development/debugging configuration
 type EngineeringConfig struct {
-	ShowNerdStats bool `yaml:"show_nerdstats"`
+	ShowNerdStats                        bool    `yaml:"show_nerdstats"`
+	EndpointDegradedSuccessRateThreshold float64 `yaml:"endpoint_degraded_success_rate_threshold"`
+	EndpointDegradedMinimumRequests      int64   `yaml:"endpoint_degraded_minimum_requests"`
 }
 
 // ModelRegistryConfig holds model registry configuration
@@ -416,6 +439,28 @@ func (c *Config) ValidateModelAliases() error {
 			}
 			seen[modelName] = true
 		}
+	}
+
+	return nil
+}
+
+func (c *Config) ValidateAllowedModels() error {
+	if len(c.AllowedModels) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool, len(c.AllowedModels))
+	for i, modelName := range c.AllowedModels {
+		if modelName == "" {
+			return fmt.Errorf("allowed_models has empty model name at position %d", i)
+		}
+		if strings.TrimSpace(modelName) != modelName {
+			return fmt.Errorf("allowed model %q contains leading/trailing whitespace", modelName)
+		}
+		if seen[modelName] {
+			slog.Warn("Duplicate model name in allowed_models", "model", modelName)
+		}
+		seen[modelName] = true
 	}
 
 	return nil

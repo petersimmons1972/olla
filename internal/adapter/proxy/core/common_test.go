@@ -14,6 +14,34 @@ import (
 	"github.com/thushan/olla/internal/core/ports"
 )
 
+func TestInjectEndpointAuth_WithKey(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://backend.local/test", nil)
+	endpoint := &domain.Endpoint{APIKey: "test-key"}
+
+	InjectEndpointAuth(req, endpoint)
+
+	assert.Equal(t, "Bearer test-key", req.Header.Get(constants.HeaderAuthorization))
+}
+
+func TestInjectEndpointAuth_NoKey(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://backend.local/test", nil)
+	endpoint := &domain.Endpoint{}
+
+	InjectEndpointAuth(req, endpoint)
+
+	assert.Empty(t, req.Header.Get(constants.HeaderAuthorization))
+}
+
+func TestInjectEndpointAuth_DoesNotOverwriteExistingHeader(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://backend.local/test", nil)
+	req.Header.Set(constants.HeaderAuthorization, "Bearer existing-token")
+	endpoint := &domain.Endpoint{APIKey: "new-key"}
+
+	InjectEndpointAuth(req, endpoint)
+
+	assert.Equal(t, "Bearer existing-token", req.Header.Get(constants.HeaderAuthorization))
+}
+
 func TestCopyHeaders(t *testing.T) {
 	tests := []struct {
 		name            string

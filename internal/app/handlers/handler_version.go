@@ -54,10 +54,12 @@ func (a *Application) versionHandler(w http.ResponseWriter, r *http.Request) {
 		API: APIInfo{
 			Version: "v1",
 			Endpoints: map[string]string{
-				"health":  "/internal/health",
-				"status":  "/internal/status",
-				"process": "/internal/process",
-				"version": "/internal/version",
+				"health":    constants.DefaultHealthCheckEndpoint,
+				"liveness":  constants.DefaultLivenessEndpoint,
+				"readiness": constants.DefaultReadinessEndpoint,
+				"status":    "/internal/status",
+				"process":   "/internal/process",
+				"version":   "/internal/version",
 			},
 		},
 		Links: map[string]string{

@@ -15,17 +15,21 @@ import (
 )
 
 type EndpointSummary struct {
-	Name          string `json:"name"`
-	Type          string `json:"type"`
-	Status        string `json:"status"`
-	LastModelSync string `json:"last_model_sync,omitempty"`
-	HealthCheck   string `json:"health_check"`
-	ResponseTime  string `json:"response_time,omitempty"`
-	SuccessRate   string `json:"success_rate"`
-	Issues        string `json:"issues,omitempty"`
-	Priority      int    `json:"priority"`
-	ModelCount    int    `json:"model_count"`
-	RequestCount  int64  `json:"request_count"`
+	CircuitBreaker     *domain.CircuitBreakerState `json:"circuit_breaker,omitempty"`
+	Name               string                      `json:"name"`
+	Type               string                      `json:"type"`
+	Status             string                      `json:"status"`
+	LastModelSync      string                      `json:"last_model_sync,omitempty"`
+	HealthCheck        string                      `json:"health_check"`
+	ResponseTime       string                      `json:"response_time,omitempty"`
+	SuccessRate        string                      `json:"success_rate"`
+	DegradationReason  string                      `json:"degradation_reason,omitempty"`
+	Issues             string                      `json:"issues,omitempty"`
+	Priority           int                         `json:"priority"`
+	ModelCount         int                         `json:"model_count"`
+	RequestCount       int64                       `json:"request_count"`
+	SuccessRatePercent float64                     `json:"success_rate_percent,omitempty"`
+	Degraded           bool                        `json:"degraded"`
 }
 
 type EndpointStatusResponse struct {
@@ -37,7 +41,11 @@ type EndpointStatusResponse struct {
 }
 
 const (
-	healthyStatus = "healthy"
+	healthyStatus                          = "healthy"
+	circuitOpenStatus                      = "circuit_open"
+	circuitOpenDegradationReason           = "circuit breaker open"
+	degradedSuccessRateThresholdPercent    = 80.0
+	degradedSuccessRateMinimumRequestCount = int64(10)
 )
 
 func (a *Application) endpointsStatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -108,8 +116,8 @@ func (a *Application) buildEndpointSummaryOptimised(endpoint *domain.Endpoint, s
 
 	if hasStats {
 		summary.RequestCount = stats.TotalRequests
-		if stats.TotalRequests > 0 {
-			successRate := (float64(stats.SuccessfulRequests) * 100.0) / float64(stats.TotalRequests)
+		if successRate, ok := endpointSuccessRatePercent(stats, hasStats); ok {
+			summary.SuccessRatePercent = successRate
 			summary.SuccessRate = format.Percentage(successRate)
 		} else {
 			summary.SuccessRate = "N/A"
@@ -119,15 +127,53 @@ func (a *Application) buildEndpointSummaryOptimised(endpoint *domain.Endpoint, s
 	}
 
 	summary.Issues = a.getEndpointIssuesSummaryOptimised(endpoint, stats, hasStats)
+	if a.endpointSuccessRateDegraded(stats, hasStats) {
+		summary.Degraded = true
+		summary.DegradationReason = "low success rate"
+	}
+	if circuitBreaker := a.getCircuitBreakerState(endpoint); circuitBreaker != nil {
+		summary.CircuitBreaker = circuitBreaker
+		if isCircuitBreakerOpen(circuitBreaker) {
+			summary.Status = circuitOpenStatus
+			summary.Degraded = true
+			summary.DegradationReason = circuitOpenDegradationReason
+			summary.Issues = appendEndpointIssue(summary.Issues, circuitOpenDegradationReason)
+		}
+	}
 
 	return summary
 }
 
-func (a *Application) getEndpointIssuesSummaryOptimised(endpoint *domain.Endpoint, stats ports.EndpointStats, hasStats bool) string {
-	if endpoint.Status == domain.StatusHealthy && endpoint.ConsecutiveFailures == 0 {
-		return ""
+func (a *Application) getCircuitBreakerState(endpoint *domain.Endpoint) *domain.CircuitBreakerState {
+	if a.proxyService == nil {
+		return nil
+	}
+	breakerStateProvider, ok := a.proxyService.(interface {
+		GetCircuitBreakerState(endpoint *domain.Endpoint) domain.CircuitBreakerState
+	})
+	if !ok {
+		return nil
 	}
 
+	state := breakerStateProvider.GetCircuitBreakerState(endpoint)
+	return &state
+}
+
+func isCircuitBreakerOpen(state *domain.CircuitBreakerState) bool {
+	return state != nil && state.State == "open"
+}
+
+func appendEndpointIssue(existing, issue string) string {
+	if existing == "" {
+		return issue
+	}
+	if existing == issue {
+		return existing
+	}
+	return existing + "; " + issue
+}
+
+func (a *Application) getEndpointIssuesSummaryOptimised(endpoint *domain.Endpoint, stats ports.EndpointStats, hasStats bool) string {
 	if endpoint.Status == domain.StatusOffline || endpoint.Status == domain.StatusUnhealthy {
 		return "unavailable"
 	}
@@ -136,11 +182,48 @@ func (a *Application) getEndpointIssuesSummaryOptimised(endpoint *domain.Endpoin
 		return "unstable"
 	}
 
-	if hasStats && stats.TotalRequests > 10 {
-		if stats.SuccessfulRequests*100 < stats.TotalRequests*90 {
-			return "low success rate"
-		}
+	if a.endpointSuccessRateDegraded(stats, hasStats) {
+		return "low success rate"
+	}
+
+	if endpoint.Status == domain.StatusHealthy && endpoint.ConsecutiveFailures == 0 {
+		return ""
 	}
 
 	return ""
+}
+
+func endpointSuccessRatePercent(stats ports.EndpointStats, hasStats bool) (float64, bool) {
+	if !hasStats || stats.TotalRequests == 0 {
+		return 0, false
+	}
+
+	return float64(stats.SuccessfulRequests) * 100.0 / float64(stats.TotalRequests), true
+}
+
+func (a *Application) endpointSuccessRateDegraded(stats ports.EndpointStats, hasStats bool) bool {
+	successRate, ok := endpointSuccessRatePercent(stats, hasStats)
+	threshold, minRequests := a.endpointSuccessRateDegradationConfig()
+	if !ok || stats.TotalRequests < minRequests {
+		return false
+	}
+
+	return successRate < threshold
+}
+
+func (a *Application) endpointSuccessRateDegradationConfig() (float64, int64) {
+	threshold := degradedSuccessRateThresholdPercent
+	minRequests := degradedSuccessRateMinimumRequestCount
+	if a.Config == nil {
+		return threshold, minRequests
+	}
+
+	if configured := a.Config.Engineering.EndpointDegradedSuccessRateThreshold; configured > 0 {
+		threshold = configured
+	}
+	if configured := a.Config.Engineering.EndpointDegradedMinimumRequests; configured > 0 {
+		minRequests = configured
+	}
+
+	return threshold, minRequests
 }

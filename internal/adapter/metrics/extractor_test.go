@@ -277,10 +277,6 @@ func TestExtractor_ExtractFromHeaders(t *testing.T) {
 }
 
 func TestExtractor_ValidateProfile_InvalidPath(t *testing.T) {
-	// Skip validation test for now as JSONPath compilation validation
-	// is not working as expected with the PaesslerAG/jsonpath library
-	t.Skip("JSONPath validation not working as expected")
-
 	profile := &mockProfile{
 		name: "invalid",
 		config: &domain.ProfileConfig{

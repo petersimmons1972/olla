@@ -3,6 +3,8 @@ package profile
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 
@@ -44,7 +46,33 @@ func NewFactory(profilesDir string) (*Factory, error) {
 }
 
 func NewFactoryWithDefaults() (*Factory, error) {
-	return NewFactory("./config/profiles")
+	return NewFactory(defaultProfilesDir())
+}
+
+func defaultProfilesDir() string {
+	const relProfilesDir = "config/profiles"
+
+	if stat, err := os.Stat(relProfilesDir); err == nil && stat.IsDir() {
+		return relProfilesDir
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return relProfilesDir
+	}
+
+	for {
+		candidate := filepath.Join(cwd, relProfilesDir)
+		if stat, err := os.Stat(candidate); err == nil && stat.IsDir() {
+			return candidate
+		}
+
+		parent := filepath.Dir(cwd)
+		if parent == cwd {
+			return relProfilesDir
+		}
+		cwd = parent
+	}
 }
 
 func (f *Factory) GetProfile(platformType string) (domain.InferenceProfile, error) {

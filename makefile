@@ -132,7 +132,14 @@ test-race:
 # Run tests with coverage
 test-cover:
 	@echo "Running tests with coverage..."
-	@go test -cover ./...
+	@go test -short -coverprofile=coverage.out ./...
+
+# Run selected non-short reliability tests in CI without pulling in unrelated flaky stress suites
+test-reliability:
+	@echo "Running non-short reliability tests..."
+	@go test ./internal/adapter/metrics -run TestIntegration_PerformanceRegression -count=1
+	@go test ./internal/adapter/proxy -run TestPerformanceCharacteristics -count=1
+	@go test ./internal/adapter/proxy/sherpa -run 'TestPerformTimedRead_(NoGoroutineLeak_Stress|ConcurrentStress)' -count=1
 
 # Run stress tests (comprehensive testing)
 test-stress:

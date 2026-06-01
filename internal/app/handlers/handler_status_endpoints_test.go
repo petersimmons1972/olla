@@ -12,8 +12,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/core/ports"
+	"github.com/thushan/olla/internal/logger"
 )
 
 // mockStatusEndpointRepository for status endpoint testing
@@ -101,6 +103,35 @@ func (m *mockStatusStatsCollector) GetEndpointStats() map[string]ports.EndpointS
 		return make(map[string]ports.EndpointStats)
 	}
 	return m.endpointStats
+}
+
+type mockStatusProxyService struct {
+	states map[string]domain.CircuitBreakerState
+}
+
+func (m *mockStatusProxyService) ProxyRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, stats *ports.RequestStats, rlog logger.StyledLogger) error {
+	return nil
+}
+
+func (m *mockStatusProxyService) ProxyRequestToEndpoints(
+	ctx context.Context,
+	w http.ResponseWriter,
+	r *http.Request,
+	endpoints []*domain.Endpoint,
+	stats *ports.RequestStats,
+	rlog logger.StyledLogger,
+) error {
+	return nil
+}
+
+func (m *mockStatusProxyService) GetStats(ctx context.Context) (ports.ProxyStats, error) {
+	return ports.ProxyStats{}, nil
+}
+
+func (m *mockStatusProxyService) UpdateConfig(configuration ports.ProxyConfiguration) {}
+
+func (m *mockStatusProxyService) GetCircuitBreakerState(endpoint *domain.Endpoint) domain.CircuitBreakerState {
+	return m.states[endpoint.Name]
 }
 
 // mockStatusModelRegistry for status endpoint testing
@@ -203,6 +234,136 @@ func TestEndpointsStatusHandler_BasicFunctionality(t *testing.T) {
 	assert.Equal(t, 1, response.HealthyCount)
 	assert.Equal(t, 1, response.RoutableCount)
 	assert.Len(t, response.Endpoints, 2)
+}
+
+func TestEndpointsStatusHandler_IncludesCircuitBreakerState(t *testing.T) {
+	lastTrip := time.Now().Add(-5 * time.Second).UTC().Truncate(time.Second)
+	endpoints := []*domain.Endpoint{
+		{
+			Name:      "breaker-open",
+			Type:      "ollama",
+			URLString: "http://localhost:11434",
+			Status:    domain.StatusHealthy,
+			Priority:  1,
+		},
+	}
+	app := createTestStatusApplication(endpoints)
+	app.proxyService = &mockStatusProxyService{
+		states: map[string]domain.CircuitBreakerState{
+			"breaker-open": {
+				State:                "open",
+				LastTripTimestamp:    &lastTrip,
+				ConsecutiveFailures:  3,
+				CooldownRemainingSec: 25,
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/status/endpoints", nil)
+	w := httptest.NewRecorder()
+
+	app.endpointsStatusHandler(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var response EndpointStatusResponse
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	require.Len(t, response.Endpoints, 1)
+
+	summary := response.Endpoints[0]
+	assert.Equal(t, "circuit_open", summary.Status)
+	assert.True(t, summary.Degraded)
+	assert.Equal(t, "circuit breaker open", summary.DegradationReason)
+	assert.Equal(t, "circuit breaker open", summary.Issues)
+	require.NotNil(t, summary.CircuitBreaker)
+	assert.Equal(t, "open", summary.CircuitBreaker.State)
+	assert.Equal(t, int64(3), summary.CircuitBreaker.ConsecutiveFailures)
+	assert.Equal(t, 25, summary.CircuitBreaker.CooldownRemainingSec)
+	require.NotNil(t, summary.CircuitBreaker.LastTripTimestamp)
+	assert.True(t, summary.CircuitBreaker.LastTripTimestamp.Equal(lastTrip))
+}
+
+func TestEndpointsStatusHandler_MarksHealthyEndpointWithLowSuccessRateDegraded(t *testing.T) {
+	endpoint := &domain.Endpoint{
+		Name:      "flaky-endpoint",
+		Type:      "ollama",
+		URLString: "http://localhost:11434",
+		Status:    domain.StatusHealthy,
+		Priority:  1,
+	}
+	app := createTestStatusApplication([]*domain.Endpoint{endpoint})
+	app.statsCollector = &mockStatusStatsCollector{
+		endpointStats: map[string]ports.EndpointStats{
+			"http://localhost:11434": {
+				TotalRequests:      20,
+				SuccessfulRequests: 12,
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/status/endpoints", nil)
+	w := httptest.NewRecorder()
+
+	app.endpointsStatusHandler(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var response EndpointStatusResponse
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	require.Len(t, response.Endpoints, 1)
+
+	summary := response.Endpoints[0]
+	assert.Equal(t, "healthy", summary.Status)
+	assert.True(t, summary.Degraded)
+	assert.Equal(t, "low success rate", summary.DegradationReason)
+	assert.Equal(t, "low success rate", summary.Issues)
+	assert.Equal(t, "60.0%", summary.SuccessRate)
+	assert.Equal(t, 60.0, summary.SuccessRatePercent)
+}
+
+func TestEndpointsStatusHandler_UsesConfiguredDegradedSuccessRateThreshold(t *testing.T) {
+	endpoint := &domain.Endpoint{
+		Name:      "borderline-endpoint",
+		Type:      "ollama",
+		URLString: "http://localhost:11434",
+		Status:    domain.StatusHealthy,
+		Priority:  1,
+	}
+	app := createTestStatusApplication([]*domain.Endpoint{endpoint})
+	app.Config = &config.Config{
+		Engineering: config.EngineeringConfig{
+			EndpointDegradedSuccessRateThreshold: 95,
+			EndpointDegradedMinimumRequests:      5,
+		},
+	}
+	app.statsCollector = &mockStatusStatsCollector{
+		endpointStats: map[string]ports.EndpointStats{
+			"http://localhost:11434": {
+				TotalRequests:      10,
+				SuccessfulRequests: 9,
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/status/endpoints", nil)
+	w := httptest.NewRecorder()
+
+	app.endpointsStatusHandler(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var response EndpointStatusResponse
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	require.Len(t, response.Endpoints, 1)
+
+	summary := response.Endpoints[0]
+	assert.True(t, summary.Degraded)
+	assert.Equal(t, "low success rate", summary.Issues)
+	assert.Equal(t, "90.0%", summary.SuccessRate)
+	assert.Equal(t, 90.0, summary.SuccessRatePercent)
 }
 
 func TestEndpointsStatusHandler_Concurrent(t *testing.T) {
@@ -486,10 +647,36 @@ func TestGetEndpointIssuesSummaryOptimised(t *testing.T) {
 			},
 			stats: ports.EndpointStats{
 				TotalRequests:      100,
-				SuccessfulRequests: 80, // 80% success rate
+				SuccessfulRequests: 79, // below the default 80% success rate threshold
 			},
 			hasStats:       true,
 			expectedIssues: "low success rate",
+		},
+		{
+			name: "healthy endpoint with low success rate",
+			endpoint: &domain.Endpoint{
+				Status:              domain.StatusHealthy,
+				ConsecutiveFailures: 0,
+			},
+			stats: ports.EndpointStats{
+				TotalRequests:      20,
+				SuccessfulRequests: 12,
+			},
+			hasStats:       true,
+			expectedIssues: "low success rate",
+		},
+		{
+			name: "low success rate below minimum request count",
+			endpoint: &domain.Endpoint{
+				Status:              domain.StatusHealthy,
+				ConsecutiveFailures: 0,
+			},
+			stats: ports.EndpointStats{
+				TotalRequests:      9,
+				SuccessfulRequests: 6,
+			},
+			hasStats:       true,
+			expectedIssues: "",
 		},
 	}
 

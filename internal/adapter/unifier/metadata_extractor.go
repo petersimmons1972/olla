@@ -13,6 +13,8 @@ var (
 	configCacheOnce sync.Once
 )
 
+const modelTypeEmbeddings = "embeddings"
+
 // getConfig loads configuration once and caches for performance.
 // Thread-safe via sync.Once.
 func getConfig() *ModelUnificationConfig {
@@ -116,7 +118,9 @@ func extractParameterSize(sizeStr string) (string, int64) {
 	return normalizedSize, paramCount
 }
 
-// inferCapabilitiesFromMetadata infers model capabilities from various metadata fields
+// inferCapabilitiesFromMetadata infers model capabilities from various metadata fields.
+//
+//nolint:gocognit // Capability inference intentionally combines type, name, context, and explicit metadata rules.
 func inferCapabilitiesFromMetadata(modelType, modelName string, contextLength int64, metadata map[string]interface{}) []string {
 	capabilities := make(map[string]bool)
 	config := getConfig()
@@ -129,19 +133,26 @@ func inferCapabilitiesFromMetadata(modelType, modelName string, contextLength in
 			capabilities[cap] = true
 		}
 		// Embedding models don't generate text, they encode it
-		if modelTypeLower == "embeddings" || modelTypeLower == "embedding" {
+		if modelTypeLower == modelTypeEmbeddings || modelTypeLower == "embedding" {
 			delete(capabilities, "text-generation")
 		}
 	}
 
 	// Name-based inference using patterns from configuration
 	nameLower := strings.ToLower(modelName)
+	embeddingByName := false
 	for _, pattern := range config.Capabilities.NamePatterns {
 		if pattern.regex != nil && pattern.regex.MatchString(nameLower) {
 			for _, cap := range pattern.Capabilities {
 				capabilities[cap] = true
+				if cap == "embeddings" {
+					embeddingByName = true
+				}
 			}
 		}
+	}
+	if embeddingByName {
+		delete(capabilities, "text-generation")
 	}
 
 	// Context window size determines long-form processing capabilities

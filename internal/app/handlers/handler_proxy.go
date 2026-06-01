@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,6 +42,11 @@ func (a *Application) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, r := a.setupRequestContext(r, pr.stats)
 
 	a.analyzeRequest(ctx, r, pr)
+
+	if !a.isModelAllowed(pr.model) {
+		a.writeModelAllowlistError(w, pr.model)
+		return
+	}
 
 	// Sticky session key must be computed after analyzeRequest so the model
 	// name is available; inject into context before endpoint selection.
@@ -392,6 +398,35 @@ func (a *Application) handleProxyError(w http.ResponseWriter, err error) {
 	}
 }
 
+func makeAllowedModelSet(models []string) map[string]struct{} {
+	if len(models) == 0 {
+		return nil
+	}
+	allowed := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		allowed[model] = struct{}{}
+	}
+	return allowed
+}
+
+func (a *Application) isModelAllowed(model string) bool {
+	if model == "" || len(a.allowedModels) == 0 {
+		return true
+	}
+	_, ok := a.allowedModels[model]
+	return ok
+}
+
+func (a *Application) writeModelAllowlistError(w http.ResponseWriter, model string) {
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error":          fmt.Sprintf("model %q is not allowed by allowed_models", model),
+		"model":          model,
+		"allowed_models": a.Config.AllowedModels,
+	})
+}
+
 func (a *Application) stripRoutePrefix(ctx context.Context, path string) string {
 	return util.StripRoutePrefix(ctx, path, constants.ContextRoutePrefixKey)
 }
@@ -443,6 +478,9 @@ func (a *Application) filterEndpointsByProfile(endpoints []*domain.Endpoint, pro
 	// stage 3: specific model filtering using routing strategy
 	if profile != nil && profile.ModelName != "" && a.modelRegistry != nil {
 		ctx := context.Background()
+		if profile.ModelCapabilities != nil {
+			ctx = context.WithValue(ctx, constants.ContextModelCapabilitiesKey, profile.ModelCapabilities)
+		}
 
 		// aliases map one name to multiple backend-specific models, so they
 		// need dedicated resolution rather than the standard single-model path

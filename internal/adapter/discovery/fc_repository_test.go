@@ -33,6 +33,7 @@ type FCModelSpec struct {
 	Priority                int      `json:"priority,omitempty"`
 	CircuitBreakerThreshold int      `json:"circuitBreakerThreshold,omitempty"`
 	Capabilities            []string `json:"capabilities,omitempty"`
+	ExtraArgs               []string `json:"extraArgs,omitempty"`
 	ModelName               string   `json:"modelName,omitempty"`
 	LoadedModel             string   `json:"loadedModel,omitempty"`
 }
@@ -819,5 +820,62 @@ func TestFCEndpointRepository_PollSyncsModelRegistryWithCapabilitiesAndRoutingNa
 	}
 	if len(models[0].Capabilities) != 1 || models[0].Capabilities[0] != "embeddings" {
 		t.Fatalf("expected embeddings capability, got %+v", models[0].Capabilities)
+	}
+}
+
+func TestFCEndpointRepository_PollUsesExtraArgsAliasForRoutingName(t *testing.T) {
+	// llama-cpp embed endpoints use --alias BAAI/bge-m3 but the service name
+	// in the FC registry is "embed-w6800". Requests arrive with model=BAAI/bge-m3,
+	// so fcRoutingModelName must extract the --alias value from extraArgs when
+	// ModelName and LoadedModel are both empty.
+	entries := []FCRegistryEntry{
+		{
+			Host: "precision.petersimmons.com",
+			Models: []FCModelSpec{
+				{
+					Name:         "embed-w6800",
+					Port:         8005,
+					Framework:    "llama-cpp",
+					Capabilities: []string{"embeddings"},
+					ExtraArgs:    []string{"--embedding", "--alias", "BAAI/bge-m3", "--ctx-size", "2048"},
+				},
+			},
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	repo := discovery.NewStaticEndpointRepository()
+	modelRegistry := registry.NewMemoryModelRegistry(newTestLogger())
+	poller := discovery.NewFCDiscoveryPollerWithRegistry(repo, modelRegistry, srv.URL, newTestLogger())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("Poll() returned error: %v", err)
+	}
+
+	// Model should be reachable by the --alias value, not the service name
+	embedEndpoints, err := modelRegistry.GetEndpointsForModel(ctx, "BAAI/bge-m3")
+	if err != nil {
+		t.Fatalf("GetEndpointsForModel(BAAI/bge-m3) error: %v", err)
+	}
+	if len(embedEndpoints) != 1 || embedEndpoints[0] != "http://precision.petersimmons.com:8005" {
+		t.Fatalf("expected BAAI/bge-m3 to route to embed endpoint, got %+v", embedEndpoints)
+	}
+
+	// Service name "embed-w6800" should NOT be the routing key when --alias is set
+	serviceEndpoints, err := modelRegistry.GetEndpointsForModel(ctx, "embed-w6800")
+	if err == nil && len(serviceEndpoints) > 0 {
+		t.Fatalf("expected no routing by service name embed-w6800 when --alias is set, got %+v", serviceEndpoints)
 	}
 }

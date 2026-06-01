@@ -26,6 +26,8 @@ type fcModelSpec struct {
 	HealthCheckURL          string   `json:"healthCheckURL,omitempty"`
 	ModelURL                string   `json:"modelURL,omitempty"`
 	CircuitBreakerTimeout   string   `json:"circuitBreakerTimeout,omitempty"`
+	ModelName               string   `json:"modelName,omitempty"`
+	LoadedModel             string   `json:"loadedModel,omitempty"`
 	Capabilities            []string `json:"capabilities,omitempty"`
 	Port                    int      `json:"port"`
 	Priority                int      `json:"priority,omitempty"`
@@ -152,7 +154,10 @@ func (p *FCDiscoveryPoller) syncModelsToRegistry(ctx context.Context, entries []
 			if _, seen := desiredByURL[endpointURL]; !seen {
 				desiredURLOrder = append(desiredURLOrder, endpointURL)
 			}
-			desiredByURL[endpointURL] = append(desiredByURL[endpointURL], &domain.ModelInfo{Name: model.Name})
+			desiredByURL[endpointURL] = append(desiredByURL[endpointURL], &domain.ModelInfo{
+				Name:         fcRoutingModelName(model),
+				Capabilities: append([]string(nil), model.Capabilities...),
+			})
 		}
 	}
 
@@ -182,6 +187,19 @@ func (p *FCDiscoveryPoller) syncModelsToRegistry(ctx context.Context, entries []
 
 	p.logger.Debug("fc-discovery: pre-registered FC models in model registry",
 		"endpoints", len(desiredURLOrder))
+}
+
+// fcRoutingModelName returns the model name to use for routing and registry keying.
+// Priority: modelName (FC-assigned canonical name) > loadedModel (runtime model name)
+// > service name (FC CRD name, which may be a deployment alias like "embed-mi50").
+func fcRoutingModelName(model fcModelSpec) string {
+	if model.ModelName != "" {
+		return model.ModelName
+	}
+	if model.LoadedModel != "" {
+		return model.LoadedModel
+	}
+	return model.Name
 }
 
 // RunLoop starts a background polling loop. It polls immediately on first call, then

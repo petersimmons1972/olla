@@ -33,6 +33,8 @@ type FCModelSpec struct {
 	Priority                int      `json:"priority,omitempty"`
 	CircuitBreakerThreshold int      `json:"circuitBreakerThreshold,omitempty"`
 	Capabilities            []string `json:"capabilities,omitempty"`
+	ModelName               string   `json:"modelName,omitempty"`
+	LoadedModel             string   `json:"loadedModel,omitempty"`
 }
 
 func TestFCEndpointRepository_PollMixedPayloadSkipsUnrecognizedAndLoadsEmbeddings(t *testing.T) {
@@ -739,5 +741,83 @@ func TestFCEndpointRepository_VLLMAndOpenAICompatibleTypesAccepted(t *testing.T)
 	}
 	if !typesSeen["openai-compatible"] {
 		t.Errorf("expected endpoint with type \"openai-compatible\" but not found; types seen: %v", typesSeen)
+	}
+}
+
+// TestFCEndpointRepository_PollSyncsModelRegistryWithCapabilitiesAndRoutingNames
+// verifies that modelName/loadedModel are used as the registry routing key (not the
+// FC service name), and that capabilities are propagated into the model registry.
+// This is the regression test for petersimmons1972/olla#60.
+func TestFCEndpointRepository_PollSyncsModelRegistryWithCapabilitiesAndRoutingNames(t *testing.T) {
+	entries := []FCRegistryEntry{
+		{
+			Host: "oblivion.petersimmons.com",
+			Models: []FCModelSpec{
+				{
+					Name:         "embed-mi50",
+					Port:         8003,
+					ModelName:    "BAAI/bge-m3",
+					LoadedModel:  "BAAI/bge-m3",
+					Capabilities: []string{"embeddings"},
+				},
+				{
+					Name:         "chat-mi50",
+					Port:         8004,
+					LoadedModel:  "meta-llama/Llama-3.1-8B-Instruct",
+					Capabilities: []string{"chat"},
+				},
+			},
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	repo := discovery.NewStaticEndpointRepository()
+	modelRegistry := registry.NewMemoryModelRegistry(newTestLogger())
+	poller := discovery.NewFCDiscoveryPollerWithRegistry(repo, modelRegistry, srv.URL, newTestLogger())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("Poll() returned error: %v", err)
+	}
+
+	// embed-mi50 should be reachable by its modelName, not its service name
+	embedEndpoints, err := modelRegistry.GetEndpointsForModel(ctx, "BAAI/bge-m3")
+	if err != nil {
+		t.Fatalf("GetEndpointsForModel(embed) error: %v", err)
+	}
+	if len(embedEndpoints) != 1 || embedEndpoints[0] != "http://oblivion.petersimmons.com:8003" {
+		t.Fatalf("expected embed model endpoint mapping, got %+v", embedEndpoints)
+	}
+
+	// chat-mi50 should be reachable by its loadedModel, not its service name
+	chatEndpoints, err := modelRegistry.GetEndpointsForModel(ctx, "meta-llama/Llama-3.1-8B-Instruct")
+	if err != nil {
+		t.Fatalf("GetEndpointsForModel(chat) error: %v", err)
+	}
+	if len(chatEndpoints) != 1 || chatEndpoints[0] != "http://oblivion.petersimmons.com:8004" {
+		t.Fatalf("expected loadedModel endpoint mapping, got %+v", chatEndpoints)
+	}
+
+	// capabilities must be preserved on the embed model
+	models, err := modelRegistry.GetModelsForEndpoint(ctx, "http://oblivion.petersimmons.com:8003")
+	if err != nil {
+		t.Fatalf("GetModelsForEndpoint error: %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("expected 1 model on embed endpoint, got %d", len(models))
+	}
+	if len(models[0].Capabilities) != 1 || models[0].Capabilities[0] != "embeddings" {
+		t.Fatalf("expected embeddings capability, got %+v", models[0].Capabilities)
 	}
 }

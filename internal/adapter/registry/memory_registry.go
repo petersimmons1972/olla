@@ -64,12 +64,13 @@ func (r *MemoryModelRegistry) RegisterModel(ctx context.Context, endpointURL str
 	for i, existing := range endpointData.Models {
 		if existing.Name == model.Name {
 			endpointData.Models[i] = &domain.ModelInfo{
-				Name:        model.Name,
-				Size:        model.Size,
-				Type:        model.Type,
-				Description: model.Description,
-				LastSeen:    model.LastSeen,
-				Details:     model.Details,
+				Name:         model.Name,
+				Capabilities: model.Capabilities,
+				Size:         model.Size,
+				Type:         model.Type,
+				Description:  model.Description,
+				LastSeen:     model.LastSeen,
+				Details:      model.Details,
 			}
 			modelExists = true
 			break
@@ -78,12 +79,13 @@ func (r *MemoryModelRegistry) RegisterModel(ctx context.Context, endpointURL str
 
 	if !modelExists {
 		endpointData.Models = append(endpointData.Models, &domain.ModelInfo{
-			Name:        model.Name,
-			Size:        model.Size,
-			Type:        model.Type,
-			Description: model.Description,
-			LastSeen:    model.LastSeen,
-			Details:     model.Details,
+			Name:         model.Name,
+			Capabilities: model.Capabilities,
+			Size:         model.Size,
+			Type:         model.Type,
+			Description:  model.Description,
+			LastSeen:     model.LastSeen,
+			Details:      model.Details,
 		})
 	}
 
@@ -139,12 +141,13 @@ func (r *MemoryModelRegistry) RegisterModels(ctx context.Context, endpointURL st
 		}
 
 		modelsCopy = append(modelsCopy, &domain.ModelInfo{
-			Name:        model.Name,
-			Size:        model.Size,
-			Type:        model.Type,
-			Description: model.Description,
-			LastSeen:    model.LastSeen,
-			Details:     model.Details,
+			Name:         model.Name,
+			Capabilities: model.Capabilities,
+			Size:         model.Size,
+			Type:         model.Type,
+			Description:  model.Description,
+			LastSeen:     model.LastSeen,
+			Details:      model.Details,
 		})
 
 		endpointSet, _ := r.modelToEndpoints.LoadOrCompute(model.Name, func() (newValue *xsync.Map[string, struct{}], cancel bool) {
@@ -185,12 +188,13 @@ func (r *MemoryModelRegistry) GetModelsForEndpoint(ctx context.Context, endpoint
 	models := make([]*domain.ModelInfo, len(endpointData.Models))
 	for i, model := range endpointData.Models {
 		models[i] = &domain.ModelInfo{
-			Name:        model.Name,
-			Size:        model.Size,
-			Type:        model.Type,
-			Description: model.Description,
-			LastSeen:    model.LastSeen,
-			Details:     model.Details,
+			Name:         model.Name,
+			Capabilities: model.Capabilities,
+			Size:         model.Size,
+			Type:         model.Type,
+			Description:  model.Description,
+			LastSeen:     model.LastSeen,
+			Details:      model.Details,
 		}
 	}
 
@@ -269,12 +273,13 @@ func (r *MemoryModelRegistry) GetAllModels(ctx context.Context) (map[string][]*d
 		models := make([]*domain.ModelInfo, len(endpointData.Models))
 		for i, model := range endpointData.Models {
 			models[i] = &domain.ModelInfo{
-				Name:        model.Name,
-				Size:        model.Size,
-				Type:        model.Type,
-				Description: model.Description,
-				LastSeen:    model.LastSeen,
-				Details:     model.Details,
+				Name:         model.Name,
+				Capabilities: model.Capabilities,
+				Size:         model.Size,
+				Type:         model.Type,
+				Description:  model.Description,
+				LastSeen:     model.LastSeen,
+				Details:      model.Details,
 			}
 		}
 		result[endpointURL] = models

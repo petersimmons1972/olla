@@ -29,6 +29,7 @@ type fcModelSpec struct {
 	ModelName               string   `json:"modelName,omitempty"`
 	LoadedModel             string   `json:"loadedModel,omitempty"`
 	Capabilities            []string `json:"capabilities,omitempty"`
+	ExtraArgs               []string `json:"extraArgs,omitempty"`
 	Port                    int      `json:"port"`
 	Priority                int      `json:"priority,omitempty"`
 	CircuitBreakerThreshold int      `json:"circuitBreakerThreshold,omitempty"`
@@ -191,13 +192,21 @@ func (p *FCDiscoveryPoller) syncModelsToRegistry(ctx context.Context, entries []
 
 // fcRoutingModelName returns the model name to use for routing and registry keying.
 // Priority: modelName (FC-assigned canonical name) > loadedModel (runtime model name)
-// > service name (FC CRD name, which may be a deployment alias like "embed-mi50").
+// > --alias from extraArgs (llama-cpp serving alias) > service name (FC CRD name,
+// which may be a deployment alias like "embed-mi50").
 func fcRoutingModelName(model fcModelSpec) string {
 	if model.ModelName != "" {
 		return model.ModelName
 	}
 	if model.LoadedModel != "" {
 		return model.LoadedModel
+	}
+	// Extract --alias from extraArgs for frameworks like llama-cpp that expose a
+	// serving alias different from the service name (e.g. BAAI/bge-m3 vs embed-w6800).
+	for i, arg := range model.ExtraArgs {
+		if arg == "--alias" && i+1 < len(model.ExtraArgs) {
+			return model.ExtraArgs[i+1]
+		}
 	}
 	return model.Name
 }

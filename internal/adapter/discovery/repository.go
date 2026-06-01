@@ -139,6 +139,13 @@ func (r *StaticEndpointRepository) LoadFromConfig(ctx context.Context, configs [
 	now := time.Now()
 	newEndpoints := make(map[string]*domain.Endpoint, len(configs))
 
+	r.mu.RLock()
+	existingEndpoints := make(map[string]*domain.Endpoint, len(r.endpoints))
+	for urlString, endpoint := range r.endpoints {
+		existingEndpoints[urlString] = endpoint
+	}
+	r.mu.RUnlock()
+
 	for _, cfg := range configs {
 		applyEndpointDefaults(&cfg)
 		if err := r.validateEndpointConfig(cfg); err != nil {
@@ -193,6 +200,15 @@ func (r *StaticEndpointRepository) LoadFromConfig(ctx context.Context, configs [
 			BackoffMultiplier:       1,
 			NextCheckTime:           now,
 			PreservePath:            cfg.PreservePath,
+		}
+
+		if existing, exists := existingEndpoints[urlString]; exists {
+			newEndpoint.Status = existing.Status
+			newEndpoint.LastChecked = existing.LastChecked
+			newEndpoint.ConsecutiveFailures = existing.ConsecutiveFailures
+			newEndpoint.BackoffMultiplier = existing.BackoffMultiplier
+			newEndpoint.NextCheckTime = existing.NextCheckTime
+			newEndpoint.LastLatency = existing.LastLatency
 		}
 
 		newEndpoints[urlString] = newEndpoint

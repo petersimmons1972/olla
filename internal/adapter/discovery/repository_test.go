@@ -2,14 +2,25 @@ package discovery
 
 import (
 	"context"
+	"net/url"
 	"testing"
 	"time"
 
 	"github.com/thushan/olla/internal/config"
+	"github.com/thushan/olla/internal/core/domain"
 )
 
 // ptrInt is a test helper to construct *int literals inline.
 func ptrInt(v int) *int { return &v }
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse URL %q: %v", raw, err)
+	}
+	return parsed
+}
 
 // TestApplyEndpointDefaults_SetsZeroValues verifies that zero-value timing and priority
 // fields are filled with the package defaults, ensuring a minimal YAML config can
@@ -441,6 +452,104 @@ func TestStaticEndpointRepository_EmptyConfig(t *testing.T) {
 
 	if len(endpoints) != 0 {
 		t.Errorf("Expected 0 endpoints for empty config, got %d", len(endpoints))
+	}
+}
+
+func TestStaticEndpointRepository_LoadFromConfig_PreservesHealthStateForUnchangedURLs(t *testing.T) {
+	repo := NewStaticEndpointRepository()
+	ctx := context.Background()
+
+	initial := []config.EndpointConfig{
+		{
+			Name:           "node-a",
+			URL:            "http://localhost:11434",
+			Type:           "ollama",
+			HealthCheckURL: "/",
+			ModelURL:       "/api/tags",
+			Priority:       ptrInt(100),
+			CheckInterval:  5 * time.Second,
+			CheckTimeout:   2 * time.Second,
+		},
+	}
+	if err := repo.LoadFromConfig(ctx, initial); err != nil {
+		t.Fatalf("initial LoadFromConfig failed: %v", err)
+	}
+
+	lastChecked := time.Now().Add(-10 * time.Second).Round(time.Millisecond)
+	nextCheck := time.Now().Add(20 * time.Second).Round(time.Millisecond)
+	if err := repo.UpdateEndpoint(ctx, &domain.Endpoint{
+		URL:                 mustParseURL(t, "http://localhost:11434"),
+		Status:              domain.StatusHealthy,
+		LastChecked:         lastChecked,
+		ConsecutiveFailures: 2,
+		BackoffMultiplier:   3,
+		NextCheckTime:       nextCheck,
+		LastLatency:         150 * time.Millisecond,
+	}); err != nil {
+		t.Fatalf("UpdateEndpoint failed: %v", err)
+	}
+
+	refreshed := []config.EndpointConfig{
+		{
+			Name:           "node-a-renamed",
+			URL:            "http://localhost:11434",
+			Type:           "ollama",
+			HealthCheckURL: "/",
+			ModelURL:       "/api/tags",
+			Priority:       ptrInt(50),
+			CheckInterval:  8 * time.Second,
+			CheckTimeout:   3 * time.Second,
+		},
+	}
+	if err := repo.LoadFromConfig(ctx, refreshed); err != nil {
+		t.Fatalf("refresh LoadFromConfig failed: %v", err)
+	}
+
+	healthy, err := repo.GetHealthy(ctx)
+	if err != nil {
+		t.Fatalf("GetHealthy failed: %v", err)
+	}
+	if len(healthy) != 1 {
+		t.Fatalf("expected 1 healthy endpoint after refresh, got %d", len(healthy))
+	}
+
+	endpoints, err := repo.GetAll(ctx)
+	if err != nil {
+		t.Fatalf("GetAll failed: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint after refresh, got %d", len(endpoints))
+	}
+	ep := endpoints[0]
+	if ep.Status != domain.StatusHealthy {
+		t.Errorf("Status = %q, want %q", ep.Status, domain.StatusHealthy)
+	}
+	if !ep.LastChecked.Equal(lastChecked) {
+		t.Errorf("LastChecked = %v, want %v", ep.LastChecked, lastChecked)
+	}
+	if ep.ConsecutiveFailures != 2 {
+		t.Errorf("ConsecutiveFailures = %d, want 2", ep.ConsecutiveFailures)
+	}
+	if ep.BackoffMultiplier != 3 {
+		t.Errorf("BackoffMultiplier = %d, want 3", ep.BackoffMultiplier)
+	}
+	if !ep.NextCheckTime.Equal(nextCheck) {
+		t.Errorf("NextCheckTime = %v, want %v", ep.NextCheckTime, nextCheck)
+	}
+	if ep.LastLatency != 150*time.Millisecond {
+		t.Errorf("LastLatency = %v, want %v", ep.LastLatency, 150*time.Millisecond)
+	}
+	if ep.Name != "node-a-renamed" {
+		t.Errorf("Name = %q, want %q", ep.Name, "node-a-renamed")
+	}
+	if ep.Priority != 50 {
+		t.Errorf("Priority = %d, want %d", ep.Priority, 50)
+	}
+	if ep.CheckInterval != 8*time.Second {
+		t.Errorf("CheckInterval = %v, want %v", ep.CheckInterval, 8*time.Second)
+	}
+	if ep.CheckTimeout != 3*time.Second {
+		t.Errorf("CheckTimeout = %v, want %v", ep.CheckTimeout, 3*time.Second)
 	}
 }
 

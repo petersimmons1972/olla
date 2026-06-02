@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	proxycore "github.com/thushan/olla/internal/adapter/proxy/core"
 	"github.com/thushan/olla/internal/adapter/translator"
 	"github.com/thushan/olla/internal/core/constants"
 	"github.com/thushan/olla/internal/core/domain"
@@ -727,6 +728,16 @@ func (a *Application) writeTranslatorError(
 		"translator", trans.Name(),
 		"error", err.Error(),
 		"status", statusCode)
+
+	// Sanitize auth-injection errors before any external write: the detailed
+	// message (endpoint name, config detail) is already logged server-side above;
+	// the caller must not see it. This covers both the ErrorWriter path and the
+	// fallback JSON path so no translation handler leaks endpoint names on
+	// auth-misconfig — closing the secondary disclosure path reported in #67.
+	if errors.Is(err, proxycore.ErrEndpointAuthMisconfigured) || errors.Is(err, proxycore.ErrEndpointAuthInternalError) {
+		err = proxycore.ErrEndpointAuthMisconfigured
+		statusCode = http.StatusBadGateway
+	}
 
 	// use custom error format if translator implements it
 	if errorWriter, ok := trans.(translator.ErrorWriter); ok {

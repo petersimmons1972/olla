@@ -65,8 +65,10 @@ func TestInjectEndpointAuth_Enabled_MissingAPIKey_ReturnsError(t *testing.T) {
 
 	err := InjectEndpointAuth(req, endpoint, true)
 
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "backend-1")
+	// Must wrap ErrEndpointAuthMisconfigured — callers use errors.Is for sanitized responses.
+	// The raw error may contain the endpoint name for server-side logging, but the sentinel
+	// is what handler boundaries check to avoid leaking config details to clients.
+	assert.ErrorIs(t, err, ErrEndpointAuthMisconfigured)
 	assert.Empty(t, req.Header.Get(constants.HeaderAuthorization))
 }
 

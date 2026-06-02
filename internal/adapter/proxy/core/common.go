@@ -25,6 +25,12 @@ var (
 	// by handler-boundary code to return a generic error to the caller without
 	// leaking endpoint names or configuration details.
 	ErrEndpointAuthMisconfigured = errors.New("upstream authentication misconfiguration")
+
+	// ErrEndpointAuthInternalError is returned for nil-pointer / programmer errors in
+	// InjectEndpointAuth (proxyReq or endpoint is nil). This is distinct from
+	// ErrEndpointAuthMisconfigured (missing api_key) so callers can classify it
+	// accurately rather than misrepresenting it as a 502 config-error.
+	ErrEndpointAuthInternalError = errors.New("endpoint auth injection called with nil context")
 )
 
 func init() {
@@ -109,7 +115,7 @@ func InjectEndpointAuth(proxyReq *http.Request, endpoint *domain.Endpoint, enabl
 		return nil
 	}
 	if proxyReq == nil || endpoint == nil {
-		return fmt.Errorf("%w: endpoint auth injection enabled but endpoint request context is missing", ErrEndpointAuthMisconfigured)
+		return fmt.Errorf("%w: endpoint auth injection enabled but endpoint request context is missing", ErrEndpointAuthInternalError)
 	}
 	if endpoint.APIKey == "" {
 		return fmt.Errorf("%w: endpoint auth injection enabled but endpoint %q has no api_key configured", ErrEndpointAuthMisconfigured, endpoint.Name)

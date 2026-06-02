@@ -62,14 +62,30 @@ func (c *HTTPHealthChecker) SetUnhealthyCallback(callback UnhealthyCallback) {
 }
 
 func NewHTTPHealthCheckerWithDefaults(repository domain.EndpointRepository, logger logger.StyledLogger) *HTTPHealthChecker {
-	// We want to enable connection pooling and reuse with some sane defaults
+	// Health probes must use fresh TCP connections on every probe.
+	//
+	// Keep-alive connection pooling is the right default for proxy traffic, but it
+	// is wrong for a health-checker whose job is to test whether the backend accepts
+	// a *new* connection right now.  When a pooled keep-alive connection goes
+	// half-open (the backend or an intermediate conntrack entry silently drops the
+	// idle flow), the Go transport reuses the dead connection on the next probe,
+	// pays a SYN-retransmit timeout (~300-400 ms), and the probe fails with a
+	// transport-level error (StatusCode 0 / "connection refused").  The endpoint
+	// flips healthy→offline, and because the same poisoned connection is reused on
+	// every subsequent probe the circuit breaker never sees a success and the
+	// endpoint never self-heals — even though a brand-new connection to the backend
+	// would succeed instantly.  This was observed in production on multi-homed hosts
+	// where conntrack idle timeouts silently drop flows between the 30 s probe
+	// interval (petersimmons1972/olla#73).
+	//
+	// DisableKeepAlives=true ensures each probe dials a fresh connection, matching
+	// the behaviour that demonstrably works (first-ever probe always succeeds).
+	// The TCP handshake overhead (~1 ms on LAN) is negligible at a 30 s check
+	// interval and is far outweighed by the correctness gain.
 	client := &http.Client{
 		Timeout: DefaultHealthCheckerTimeout,
 		Transport: &http.Transport{
-			MaxIdleConns:        10,
-			MaxIdleConnsPerHost: 2,
-			IdleConnTimeout:     30 * time.Second,
-			DisableKeepAlives:   false,
+			DisableKeepAlives: true,
 		},
 	}
 	return NewHTTPHealthChecker(repository, logger, client)

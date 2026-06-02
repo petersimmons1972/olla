@@ -241,7 +241,28 @@ func (s *DiscoveryStrategy) GetRoutableEndpoints(
 			)
 	}
 
-	// After discovery, we still don't have the model on any healthy endpoints
+	// After discovery, we still don't have the model on any healthy endpoints.
+	// Re-apply the capability filter before the fallback decision so that the
+	// post-refresh path honours the same capability guarantee as the pre-refresh
+	// path (closes #42).
+	if caps := modelCapabilitiesFromContext(ctx); caps != nil && caps.Embeddings {
+		updatedHealthy = filterEndpointsByCapability(updatedHealthy, "embeddings")
+		if len(updatedHealthy) == 0 {
+			return nil, ports.NewRoutingDecision(
+					s.Name(),
+					ports.RoutingActionRejected,
+					constants.RoutingReasonNoCapableEndpoint,
+				), domain.NewModelRoutingError(
+					modelName,
+					s.Name(),
+					"rejected",
+					0,
+					modelEndpoints,
+					errors.New("no capable endpoints after discovery refresh for embeddings request"),
+				)
+		}
+	}
+
 	// Apply fallback behavior
 	switch s.options.FallbackBehavior {
 	case constants.FallbackBehaviorNone, constants.FallbackBehaviorCompatibleOnly:
@@ -259,7 +280,7 @@ func (s *DiscoveryStrategy) GetRoutableEndpoints(
 				fmt.Errorf("model %s not found after discovery refresh", modelName),
 			)
 	default:
-		// "all" - return all healthy endpoints as fallback
+		// "all" - return all healthy endpoints as fallback (capability-filtered above)
 		return updatedHealthy, ports.NewRoutingDecision(
 			s.Name(),
 			ports.RoutingActionFallback,

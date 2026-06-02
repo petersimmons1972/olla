@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/thushan/olla/internal/adapter/inspector"
+	proxycore "github.com/thushan/olla/internal/adapter/proxy/core"
 	"github.com/thushan/olla/internal/adapter/translator"
 	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/core/constants"
@@ -498,6 +499,111 @@ func TestWriteTranslatorError_WithoutErrorWriter(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "test error", errorObj["message"])
 	assert.Equal(t, "translation_error", errorObj["type"])
+}
+
+// TestWriteTranslatorError_AuthMisconfiguredDoesNotLeakEndpointName is a regression
+// test for the BLOCKER fix in PR #71 that ensures ErrEndpointAuthMisconfigured (and
+// any %w-wrapped form) is sanitised before reaching the caller. Two invariants are
+// checked:
+//
+//  1. The response body must NOT contain the endpoint name (e.g. "backend-1").
+//  2. The response body MUST contain the opaque sentinel string
+//     "upstream authentication misconfiguration".
+//
+// Both the ErrorWriter path and the fallback JSON path are exercised.
+func TestWriteTranslatorError_AuthMisconfiguredDoesNotLeakEndpointName(t *testing.T) {
+	t.Parallel()
+
+	const endpointName = "backend-1"
+	const sentinelMsg = "upstream authentication misconfiguration"
+
+	// wrappedAuthErr simulates what InjectEndpointAuth returns in production:
+	// the endpoint name is baked into the format string but %w'd over the sentinel.
+	wrappedAuthErr := fmt.Errorf("endpoint auth injection enabled but endpoint %q has no api_key configured: %w",
+		endpointName, proxycore.ErrEndpointAuthMisconfigured)
+
+	tests := []struct {
+		name           string
+		err            error
+		useErrorWriter bool
+	}{
+		{
+			name:           "direct_sentinel_with_error_writer",
+			err:            proxycore.ErrEndpointAuthMisconfigured,
+			useErrorWriter: true,
+		},
+		{
+			name:           "wrapped_sentinel_with_error_writer",
+			err:            wrappedAuthErr,
+			useErrorWriter: true,
+		},
+		{
+			name:           "direct_sentinel_fallback_json",
+			err:            proxycore.ErrEndpointAuthMisconfigured,
+			useErrorWriter: false,
+		},
+		{
+			name:           "wrapped_sentinel_fallback_json",
+			err:            wrappedAuthErr,
+			useErrorWriter: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mockLogger := &mockStyledLogger{}
+			app := &Application{
+				logger: mockLogger,
+				Config: &config.Config{},
+			}
+			pr := &proxyRequest{requestLogger: mockLogger}
+			rec := httptest.NewRecorder()
+
+			var trans translator.RequestTranslator
+			if tt.useErrorWriter {
+				// ErrorWriter path: translator writes the err.Error() string directly.
+				// The sanitisation in writeTranslatorError must replace the error BEFORE
+				// handing it to WriteError, so WriteError never sees the endpoint name.
+				trans = &mockTranslator{
+					name:                  "anthropic",
+					implementsErrorWriter: true,
+					writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
+						w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+						w.WriteHeader(statusCode)
+						json.NewEncoder(w).Encode(map[string]interface{}{
+							"type": "error",
+							"error": map[string]interface{}{
+								"type":    "api_error",
+								"message": err.Error(),
+							},
+						})
+					},
+				}
+			} else {
+				// Fallback JSON path: translator does not implement ErrorWriter.
+				trans = &mockTranslatorWithoutErrorWriter{name: "plain"}
+			}
+
+			app.writeTranslatorError(rec, trans, pr, tt.err, http.StatusBadGateway)
+
+			body := rec.Body.String()
+
+			// BLOCKER invariant: endpoint name must not reach the client.
+			assert.NotContains(t, body, endpointName,
+				"response body must not contain the endpoint name")
+
+			// BLOCKER invariant: opaque sentinel must be present so the client gets
+			// a meaningful (but safe) error message.
+			assert.Contains(t, body, sentinelMsg,
+				"response body must contain the opaque sentinel message")
+
+			// Status must be 502 regardless of the originally-supplied status.
+			assert.Equal(t, http.StatusBadGateway, rec.Code,
+				"auth-misconfig must always produce 502 Bad Gateway")
+		})
+	}
 }
 
 func (m *mockProxyService) GetStats(ctx context.Context) (ports.ProxyStats, error) {

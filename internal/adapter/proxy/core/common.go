@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -99,7 +100,7 @@ func InjectEndpointAuth(proxyReq *http.Request, endpoint *domain.Endpoint, enabl
 		return nil
 	}
 	if proxyReq == nil || endpoint == nil {
-		return fmt.Errorf("endpoint auth injection enabled but endpoint request context is missing")
+		return errors.New("endpoint auth injection enabled but endpoint request context is missing")
 	}
 	if endpoint.APIKey == "" {
 		return fmt.Errorf("endpoint auth injection enabled but endpoint %q has no api_key configured", endpoint.Name)

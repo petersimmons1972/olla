@@ -19,6 +19,18 @@ import (
 var (
 	proxiedByHeader string
 	viaHeader       string
+
+	// ErrEndpointAuthMisconfigured is returned when outbound credential injection
+	// fails due to a missing or invalid api_key on the endpoint config. It is used
+	// by handler-boundary code to return a generic error to the caller without
+	// leaking endpoint names or configuration details.
+	ErrEndpointAuthMisconfigured = errors.New("upstream authentication misconfiguration")
+
+	// ErrEndpointAuthInternalError is returned for nil-pointer / programmer errors in
+	// InjectEndpointAuth (proxyReq or endpoint is nil). This is distinct from
+	// ErrEndpointAuthMisconfigured (missing api_key) so callers can classify it
+	// accurately rather than misrepresenting it as a 502 config-error.
+	ErrEndpointAuthInternalError = errors.New("endpoint auth injection called with nil context")
 )
 
 func init() {
@@ -95,15 +107,18 @@ func CopyHeaders(proxyReq, originalReq *http.Request) {
 // InjectEndpointAuth conditionally sets endpoint-scoped bearer auth.
 // When disabled it is a no-op. When enabled, missing endpoint credentials fail safe.
 // It never overwrites an existing Authorization header supplied by the caller.
+//
+// Errors are wrapped with ErrEndpointAuthMisconfigured so the handler boundary
+// can return a sanitised response without leaking endpoint names or config detail.
 func InjectEndpointAuth(proxyReq *http.Request, endpoint *domain.Endpoint, enabled bool) error {
 	if !enabled {
 		return nil
 	}
 	if proxyReq == nil || endpoint == nil {
-		return errors.New("endpoint auth injection enabled but endpoint request context is missing")
+		return fmt.Errorf("%w: endpoint auth injection enabled but endpoint request context is missing", ErrEndpointAuthInternalError)
 	}
 	if endpoint.APIKey == "" {
-		return fmt.Errorf("endpoint auth injection enabled but endpoint %q has no api_key configured", endpoint.Name)
+		return fmt.Errorf("%w: endpoint auth injection enabled but endpoint %q has no api_key configured", ErrEndpointAuthMisconfigured, endpoint.Name)
 	}
 	if proxyReq.Header.Get(constants.HeaderAuthorization) != "" {
 		return nil

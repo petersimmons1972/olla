@@ -210,7 +210,7 @@ func TestFilterEndpointsByCapabilities(t *testing.T) {
 				SupportedBy:       []string{domain.ProfileOllama, domain.ProfileOpenAICompatible},
 			}
 
-			filtered := app.filterEndpointsByCapabilities(endpoints, profile, styledLog)
+			filtered := app.filterEndpointsByCapabilities(context.Background(), endpoints, profile, styledLog)
 
 			assert.Len(t, filtered, tt.expectedCount, tt.description)
 		})
@@ -414,6 +414,75 @@ func (m *mockContextCapturingRegistry) GetRoutableEndpointsForModel(ctx context.
 }
 
 var _ domain.ModelRegistry = (*mockContextCapturingRegistry)(nil)
+
+// mockContextCapturingCapabilityRegistry records the context passed to GetModelsByCapability
+// so tests can verify the stage-2 capability path threads the inbound request context.
+type mockContextCapturingCapabilityRegistry struct {
+	baseMockRegistry
+	capturedCtx context.Context
+	deadline    time.Time
+	hasDeadline bool
+	models      []*domain.UnifiedModel // models to return for any capability query
+}
+
+func (m *mockContextCapturingCapabilityRegistry) GetModelsByCapability(ctx context.Context, _ string) ([]*domain.UnifiedModel, error) {
+	m.capturedCtx = ctx
+	m.deadline, m.hasDeadline = ctx.Deadline()
+	return m.models, nil
+}
+
+var _ domain.ModelRegistry = (*mockContextCapturingCapabilityRegistry)(nil)
+
+// TestFilterEndpointsByProfile_Stage2UsesRequestContext verifies that the stage-2 capability
+// path (filterEndpointsByCapabilities → findCapableModels → GetModelsByCapability) threads
+// the inbound request context — carrying its deadline — rather than a fresh Background ctx.
+// This mirrors TestFilterEndpointsByProfile_Stage3UsesRequestContext for the capability stage.
+func TestFilterEndpointsByProfile_Stage2UsesRequestContext(t *testing.T) {
+	styledLog := &mockStyledLogger{}
+
+	embedEndpoint, _ := url.Parse("http://embed:8003")
+	endpoint := &domain.Endpoint{
+		Name:         "embed",
+		URL:          embedEndpoint,
+		URLString:    "http://embed:8003",
+		Capabilities: []string{"embeddings"},
+	}
+
+	capReg := &mockContextCapturingCapabilityRegistry{
+		models: []*domain.UnifiedModel{
+			{
+				ID:           "text-embedding-ada-002",
+				Capabilities: []string{"embeddings"},
+				SourceEndpoints: []domain.SourceEndpoint{
+					{EndpointURL: "http://embed:8003"},
+				},
+			},
+		},
+	}
+	app := &Application{
+		modelRegistry: capReg,
+		logger:        styledLog,
+	}
+
+	// Create a request context with a deadline — same pattern as the Stage-3 regression test.
+	deadline := time.Now().Add(5 * time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+
+	profile := &domain.RequestProfile{
+		Path: "/v1/embeddings",
+		ModelCapabilities: &domain.ModelCapabilities{
+			Embeddings: true,
+		},
+	}
+
+	_ = app.filterEndpointsByProfile(ctx, []*domain.Endpoint{endpoint}, profile, styledLog)
+
+	// The context captured by GetModelsByCapability must carry the request deadline.
+	require.NotNil(t, capReg.capturedCtx, "GetModelsByCapability was not called")
+	assert.True(t, capReg.hasDeadline, "stage-2 capability ctx must carry the request deadline; got context.Background() instead")
+	assert.Equal(t, deadline.Unix(), capReg.deadline.Unix(), "stage-2 capability ctx deadline must match the request deadline")
+}
 
 // TestFilterEndpointsByProfile_Stage3UsesRequestContext is the regression test for #41.
 // Before the fix, stage-3 created a fresh context.Background(), discarding the request

@@ -84,7 +84,11 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 	headerStart := time.Now()
 	core.CopyHeaders(proxyReq, r)
 	if err = core.InjectEndpointAuth(proxyReq, endpoint, s.configuration.EnableEndpointAuthInjection); err != nil {
-		return err
+		// Log full detail server-side; the sentinel (no endpoint name) is what reaches
+		// the EventBus and callers so endpoint config is never leaked externally.
+		rlog.Error("endpoint auth injection failed", "error", err, "endpoint", endpoint.Name)
+		s.RecordFailure(ctx, endpoint, time.Since(stats.StartTime), core.ErrEndpointAuthMisconfigured)
+		return core.ErrEndpointAuthMisconfigured
 	}
 	stats.HeaderProcessingMs = time.Since(headerStart).Milliseconds()
 

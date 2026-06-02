@@ -89,6 +89,13 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 		if cb != nil {
 			cb.RecordFailure()
 		}
+		// Log full detail server-side; publish only the sentinel so endpoint name
+		// is never leaked to the EventBus or callers via the wrapped error string.
+		if errors.Is(err, core.ErrEndpointAuthMisconfigured) || errors.Is(err, core.ErrEndpointAuthInternalError) {
+			rlog.Error("endpoint auth injection failed", "error", err, "endpoint", endpoint.Name)
+			s.RecordFailure(ctx, endpoint, time.Since(stats.StartTime), core.ErrEndpointAuthMisconfigured)
+			return core.ErrEndpointAuthMisconfigured
+		}
 		s.RecordFailure(ctx, endpoint, time.Since(stats.StartTime), err)
 		return fmt.Errorf("failed to create proxy request: %w", err)
 	}

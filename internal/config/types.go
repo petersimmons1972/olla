@@ -143,6 +143,9 @@ type StaticDiscoveryConfig struct {
 // EndpointConfig holds configuration for an AI inference endpoint
 type EndpointConfig struct {
 	ModelFilter *domain.FilterConfig `yaml:"model_filter,omitempty"`
+	// OutboundAuth configures a custom outbound auth header for this endpoint as an
+	// alternative to APIKey/Bearer. Mutually exclusive with api_key (enforced at load).
+	OutboundAuth *OutboundAuthConfig `yaml:"outbound_auth,omitempty"`
 	// Priority uses a pointer so nil means "omitted in config" rather than explicitly zero.
 	// This lets applyEndpointDefaults distinguish "user set 0" from "user said nothing",
 	// since 0 is a valid, lower-than-default priority value.
@@ -163,6 +166,13 @@ type EndpointConfig struct {
 	CheckInterval           time.Duration `yaml:"check_interval"`
 	CheckTimeout            time.Duration `yaml:"check_timeout"`
 	PreservePath            bool          `yaml:"preserve_path"`
+}
+
+// OutboundAuthConfig is the YAML shape for a custom outbound auth header. Value
+// supports ${ENV_VAR} expansion at load time so secrets stay out of config files.
+type OutboundAuthConfig struct {
+	Header string `yaml:"header"`
+	Value  string `yaml:"value"`
 }
 
 // LoggingConfig holds logging configuration

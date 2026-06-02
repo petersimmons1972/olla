@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/thushan/olla/internal/adapter/registry/profile"
 	"github.com/thushan/olla/internal/config"
+	"github.com/thushan/olla/internal/core/constants"
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/util"
 )
@@ -200,6 +202,7 @@ func (r *StaticEndpointRepository) LoadFromConfig(ctx context.Context, configs [
 			BackoffMultiplier:       1,
 			NextCheckTime:           now,
 			PreservePath:            cfg.PreservePath,
+			OutboundAuth:            buildOutboundAuth(cfg.OutboundAuth),
 		}
 
 		if existing, exists := existingEndpoints[urlString]; exists {
@@ -320,5 +323,60 @@ func (r *StaticEndpointRepository) validateEndpointConfig(cfg config.EndpointCon
 		}
 	}
 
+	if err := validateOutboundAuth(cfg); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// validateOutboundAuth enforces the rules for the optional custom outbound auth
+// header: it is mutually exclusive with api_key, its header name must be a valid
+// non-empty HTTP token, and it may not target Authorization (that is api_key's job).
+// The value itself is validated post-ExpandEnv at injection time (fail-safe), so a
+// missing ${ENV} secret fails closed rather than sending an empty header.
+func validateOutboundAuth(cfg config.EndpointConfig) error {
+	if cfg.OutboundAuth == nil {
+		return nil
+	}
+	if cfg.APIKey != "" {
+		return errors.New("endpoint may set either api_key or outbound_auth, not both")
+	}
+	header := cfg.OutboundAuth.Header
+	if header == "" {
+		return errors.New("outbound_auth.header cannot be empty")
+	}
+	if !isValidHeaderToken(header) {
+		return fmt.Errorf("outbound_auth.header %q is not a valid HTTP header name", header)
+	}
+	if strings.EqualFold(header, constants.HeaderAuthorization) {
+		return errors.New("outbound_auth.header must not be Authorization; use api_key for Bearer auth")
+	}
+	return nil
+}
+
+// isValidHeaderToken reports whether s is a valid RFC 7230 header field-name token.
+func isValidHeaderToken(s string) bool {
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case strings.ContainsRune("!#$%&'*+-.^_`|~", c):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// buildOutboundAuth maps the YAML config to the domain type, expanding the value
+// from the environment so secrets are never stored in config files. Returns nil
+// when no custom outbound auth is configured.
+func buildOutboundAuth(cfg *config.OutboundAuthConfig) *domain.OutboundAuth {
+	if cfg == nil {
+		return nil
+	}
+	return &domain.OutboundAuth{
+		Header: cfg.Header,
+		Value:  os.ExpandEnv(cfg.Value),
+	}
 }

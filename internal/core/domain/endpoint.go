@@ -23,6 +23,7 @@ type Endpoint struct {
 	HealthCheckURL          *url.URL
 	ModelUrl                *url.URL
 	ModelFilter             *FilterConfig
+	OutboundAuth            *OutboundAuth
 	Name                    string
 	Type                    string `json:"type,omitempty"`
 	APIKey                  string `json:"-"`
@@ -41,6 +42,16 @@ type Endpoint struct {
 	ConsecutiveFailures     int
 	BackoffMultiplier       int
 	PreservePath            bool
+}
+
+// OutboundAuth defines a single static header injected on requests proxied to an
+// endpoint. It is an alternative to APIKey/Bearer for upstreams that authenticate
+// via a custom header (e.g. "X-Api-Key"). Value is resolved with os.ExpandEnv at
+// config-load time so secrets can be sourced from the environment, exactly like
+// APIKey. An endpoint may set APIKey OR OutboundAuth, never both (enforced at load).
+type OutboundAuth struct {
+	Header string
+	Value  string `json:"-"`
 }
 
 func (e *Endpoint) GetURLString() string {

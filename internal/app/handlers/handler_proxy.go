@@ -220,7 +220,7 @@ func (a *Application) getCompatibleEndpoints(ctx context.Context, pr *proxyReque
 		return nil, fmt.Errorf("no healthy endpoints available: %w", err)
 	}
 
-	compatibleEndpoints := a.filterEndpointsByProfile(endpoints, pr.profile, pr.requestLogger)
+	compatibleEndpoints := a.filterEndpointsByProfile(ctx, endpoints, pr.profile, pr.requestLogger)
 
 	return compatibleEndpoints, nil
 }
@@ -434,7 +434,9 @@ func (a *Application) stripRoutePrefix(ctx context.Context, path string) string 
 // three-stage filtering pipeline that progressively narrows down endpoints.
 // starts broad (platform compatibility), then capabilities (vision, embeddings),
 // finally specific model availability. each stage falls back gracefully.
-func (a *Application) filterEndpointsByProfile(endpoints []*domain.Endpoint, profile *domain.RequestProfile, logger logger.StyledLogger) []*domain.Endpoint {
+// ctx is the inbound request context; it is threaded into stage-3 routing so
+// that discovery refresh and downstream calls inherit the request deadline.
+func (a *Application) filterEndpointsByProfile(ctx context.Context, endpoints []*domain.Endpoint, profile *domain.RequestProfile, logger logger.StyledLogger) []*domain.Endpoint {
 	var profileFiltered []*domain.Endpoint
 
 	// stage 1: platform compatibility (ollama can't handle openai requests etc)
@@ -477,19 +479,21 @@ func (a *Application) filterEndpointsByProfile(endpoints []*domain.Endpoint, pro
 
 	// stage 3: specific model filtering using routing strategy
 	if profile != nil && profile.ModelName != "" && a.modelRegistry != nil {
-		ctx := context.Background()
+		// Derive from the inbound request context so discovery refresh and routing
+		// calls inherit the request deadline and cancellation (closes #41).
+		routingCtx := ctx
 		if profile.ModelCapabilities != nil {
-			ctx = context.WithValue(ctx, constants.ContextModelCapabilitiesKey, profile.ModelCapabilities)
+			routingCtx = context.WithValue(ctx, constants.ContextModelCapabilitiesKey, profile.ModelCapabilities)
 		}
 
 		// aliases map one name to multiple backend-specific models, so they
 		// need dedicated resolution rather than the standard single-model path
 		if a.aliasResolver != nil && a.aliasResolver.IsAlias(profile.ModelName) {
-			return a.resolveAliasEndpoints(ctx, profile, profileFiltered, logger)
+			return a.resolveAliasEndpoints(routingCtx, profile, profileFiltered, logger)
 		}
 
 		// use new routing strategy method
-		routableEndpoints, decision, err := a.modelRegistry.GetRoutableEndpointsForModel(ctx, profile.ModelName, profileFiltered)
+		routableEndpoints, decision, err := a.modelRegistry.GetRoutableEndpointsForModel(routingCtx, profile.ModelName, profileFiltered)
 
 		// store routing decision for headers and metrics
 		if decision != nil {

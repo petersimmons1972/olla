@@ -68,7 +68,7 @@ func TestFilterEndpointsByProfile_WithModel(t *testing.T) {
 			SupportedBy: []string{domain.ProfileOllama, domain.ProfileLmStudio},
 		}
 
-		filtered := app.filterEndpointsByProfile(endpoints, profile, styledLog)
+		filtered := app.filterEndpointsByProfile(context.Background(), endpoints, profile, styledLog)
 
 		// Should only return endpoint1 and endpoint2
 		assert.Len(t, filtered, 2)
@@ -84,7 +84,7 @@ func TestFilterEndpointsByProfile_WithModel(t *testing.T) {
 			SupportedBy: []string{domain.ProfileOllama, domain.ProfileLmStudio},
 		}
 
-		filtered := app.filterEndpointsByProfile(endpoints, profile, styledLog)
+		filtered := app.filterEndpointsByProfile(context.Background(), endpoints, profile, styledLog)
 
 		// Should return all compatible endpoints
 		assert.Len(t, filtered, 3)
@@ -97,7 +97,7 @@ func TestFilterEndpointsByProfile_WithModel(t *testing.T) {
 			SupportedBy: []string{domain.ProfileOllama, domain.ProfileLmStudio},
 		}
 
-		filtered := app.filterEndpointsByProfile(endpoints, profile, styledLog)
+		filtered := app.filterEndpointsByProfile(context.Background(), endpoints, profile, styledLog)
 
 		// Should return all compatible endpoints
 		assert.Len(t, filtered, 3)

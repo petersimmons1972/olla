@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/thushan/olla/internal/core/domain"
 )
 
@@ -289,7 +290,7 @@ func TestFilterEndpointsByProfile_WithCapabilities(t *testing.T) {
 			SupportedBy: []string{domain.ProfileOllama, domain.ProfileOpenAICompatible},
 		}
 
-		filtered := app.filterEndpointsByProfile(endpoints, profile, styledLog)
+		filtered := app.filterEndpointsByProfile(context.Background(), endpoints, profile, styledLog)
 
 		// Should return only endpoint1 (has llava:13b with vision)
 		assert.Len(t, filtered, 1)
@@ -305,7 +306,7 @@ func TestFilterEndpointsByProfile_WithCapabilities(t *testing.T) {
 			SupportedBy: []string{domain.ProfileOllama, domain.ProfileOpenAICompatible},
 		}
 
-		filtered := app.filterEndpointsByProfile(endpoints, profile, styledLog)
+		filtered := app.filterEndpointsByProfile(context.Background(), endpoints, profile, styledLog)
 
 		// Should return all compatible endpoints since no capability match
 		assert.Len(t, filtered, 3)
@@ -396,3 +397,60 @@ func (m *mockFullModelRegistry) GetRoutableEndpointsForModel(ctx context.Context
 // Ensure our mocks implement the interface
 var _ domain.ModelRegistry = (*mockCapabilityModelRegistry)(nil)
 var _ domain.ModelRegistry = (*mockFullModelRegistry)(nil)
+
+// mockContextCapturingRegistry records the context passed to GetRoutableEndpointsForModel
+// so tests can assert that the inbound request context (not context.Background) was used.
+type mockContextCapturingRegistry struct {
+	baseMockRegistry
+	capturedCtx context.Context
+	deadline    time.Time
+	hasDeadline bool
+}
+
+func (m *mockContextCapturingRegistry) GetRoutableEndpointsForModel(ctx context.Context, _ string, healthyEndpoints []*domain.Endpoint) ([]*domain.Endpoint, *domain.ModelRoutingDecision, error) {
+	m.capturedCtx = ctx
+	m.deadline, m.hasDeadline = ctx.Deadline()
+	return healthyEndpoints, &domain.ModelRoutingDecision{Strategy: "test", Action: "fallback", Reason: "test"}, nil
+}
+
+var _ domain.ModelRegistry = (*mockContextCapturingRegistry)(nil)
+
+// TestFilterEndpointsByProfile_Stage3UsesRequestContext is the regression test for #41.
+// Before the fix, stage-3 created a fresh context.Background(), discarding the request
+// deadline. After the fix, the routing call inherits the inbound request context deadline.
+func TestFilterEndpointsByProfile_Stage3UsesRequestContext(t *testing.T) {
+	styledLog := &mockStyledLogger{}
+
+	embedEndpoint, _ := url.Parse("http://embed:8003")
+	endpoint := &domain.Endpoint{
+		Name:         "embed",
+		URL:          embedEndpoint,
+		URLString:    "http://embed:8003",
+		Capabilities: []string{"embeddings"},
+	}
+
+	capReg := &mockContextCapturingRegistry{}
+	app := &Application{
+		modelRegistry: capReg,
+		logger:        styledLog,
+	}
+
+	// Create a request context with a deadline — this is what a real HTTP handler
+	// would have (server-imposed deadline or client timeout).
+	deadline := time.Now().Add(5 * time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+
+	profile := &domain.RequestProfile{
+		Path:      "/v1/embeddings",
+		ModelName: "BAAI/bge-m3",
+	}
+
+	_ = app.filterEndpointsByProfile(ctx, []*domain.Endpoint{endpoint}, profile, styledLog)
+
+	// The context captured by GetRoutableEndpointsForModel must have the deadline
+	// from the inbound request context, not a zero deadline from context.Background().
+	require.NotNil(t, capReg.capturedCtx, "routing was not called")
+	assert.True(t, capReg.hasDeadline, "routing ctx must carry the request deadline; got context.Background() instead")
+	assert.Equal(t, deadline.Unix(), capReg.deadline.Unix(), "routing ctx deadline must match the request deadline")
+}

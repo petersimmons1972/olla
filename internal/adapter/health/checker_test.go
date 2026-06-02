@@ -771,6 +771,308 @@ func (s *statusCodeHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
+// sequentialHTTPClient returns responses in order, cycling through the provided
+// list.  Each call pops the next response; after the list is exhausted it repeats
+// the last entry.  This lets regression tests inject a "healthy → transport-fail →
+// healthy" sequence that reproduces the half-open connection poisoning scenario
+// described in petersimmons1972/olla#73.
+type sequentialHTTPClient struct {
+	mu        sync.Mutex
+	responses []sequentialResponse
+	idx       int
+}
+
+type sequentialResponse struct {
+	statusCode int
+	err        error
+}
+
+func (c *sequentialHTTPClient) Do(_ *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	r := c.responses[c.idx]
+	if c.idx < len(c.responses)-1 {
+		c.idx++
+	}
+
+	if r.err != nil {
+		return nil, r.err
+	}
+	return &http.Response{
+		StatusCode: r.statusCode,
+		Body:       http.NoBody,
+	}, nil
+}
+
+// halfOpenConnError mimics the transport-level error the Go HTTP stack returns
+// when it reuses a pooled keep-alive connection that the peer has silently
+// closed (conntrack idle-timeout / half-open TCP).  It implements net.Error
+// (non-timeout, non-temporary) so that classifyError returns ErrorTypeNetwork
+// and determineStatus returns StatusOffline — exactly what olla#73 observes.
+//
+// Because shouldRetry returns true for ErrorTypeNetwork, HealthClient.Check
+// will retry up to DefaultMaxRetries (2) additional times.  Test sequences
+// must therefore emit (DefaultMaxRetries+1) consecutive errors to produce one
+// offline outcome visible to checkEndpoint.
+type halfOpenConnError struct{}
+
+func (e *halfOpenConnError) Error() string   { return "connection refused (half-open)" }
+func (e *halfOpenConnError) Timeout() bool   { return false }
+func (e *halfOpenConnError) Temporary() bool { return false }
+
+// TestIssue73_TransportPoisoning_HealthyThenFlip is the regression test for
+// petersimmons1972/olla#73 path (b): endpoint is discovered healthy on the first
+// probe (fresh connection), then ~30 s later the pooled connection goes half-open
+// and the probe fails → endpoint flips offline.  With the fix
+// (DisableKeepAlives=true) every probe uses a fresh connection, so the third
+// probe succeeds and the endpoint recovers to healthy.
+//
+// Without the fix, the mock sequence [200, connErr, connErr, 200] exercises the
+// stuck-offline path: the circuit breaker opens after threshold failures and the
+// endpoint never recovers because every subsequent probe (via the poisoned
+// pooled connection) also fails.  With the fix the test verifies that the
+// endpoint recovers to StatusHealthy after the successful probe.
+func TestIssue73_TransportPoisoning_HealthyThenFlip(t *testing.T) {
+	t.Parallel()
+
+	loggerCfg := &logger.Config{Level: "error", Theme: "default"}
+	log, cleanup, _ := logger.New(loggerCfg)
+	defer cleanup()
+	styledLogger := logger.NewPlainStyledLogger(log)
+
+	connErr := &halfOpenConnError{}
+
+	// HealthClient.Check retries network errors up to DefaultMaxRetries (2) times,
+	// so each failing checkEndpoint invocation consumes (DefaultMaxRetries+1) = 3
+	// error responses from the sequential client.
+	//
+	// Sequence layout:
+	//   probe 1 attempt 0:         200    → healthy
+	//   probe 2 attempts 0,1,2: 3× err   → offline (half-open connection, all retries fail)
+	//   probe 3 attempts 0,1,2: 3× err   → offline (still poisoned; would loop forever without fix)
+	//   probe 4 attempt 0:         200    → healthy (fresh conn with fix; recovery)
+	client := &sequentialHTTPClient{
+		responses: []sequentialResponse{
+			{statusCode: 200}, // probe 1: fresh connection, succeeds
+			{err: connErr},    // probe 2 attempt 0
+			{err: connErr},    // probe 2 attempt 1 (retry 1)
+			{err: connErr},    // probe 2 attempt 2 (retry 2) → StatusOffline
+			{err: connErr},    // probe 3 attempt 0
+			{err: connErr},    // probe 3 attempt 1 (retry 1)
+			{err: connErr},    // probe 3 attempt 2 (retry 2) → StatusOffline
+			{statusCode: 200}, // probe 4: backend up; fresh conn succeeds
+		},
+	}
+
+	repo := newMockRepository()
+	endpointURLStr := "http://127.0.0.1:28004"
+	healthURLStr := endpointURLStr + "/v1/models"
+	endpointURL, _ := url.Parse(endpointURLStr)
+	healthURL, _ := url.Parse(healthURLStr)
+
+	ep := &domain.Endpoint{
+		Name:                    "leviathan-embed-7900xt",
+		URL:                     endpointURL,
+		HealthCheckURL:          healthURL,
+		URLString:               endpointURLStr,
+		HealthCheckURLString:    healthURLStr,
+		Status:                  domain.StatusUnknown,
+		CheckTimeout:            2 * time.Second,
+		CheckInterval:           5 * time.Second,
+		BackoffMultiplier:       1,
+		CircuitBreakerThreshold: DefaultCircuitBreakerThreshold,
+		CircuitBreakerTimeout:   DefaultCircuitBreakerTimeout,
+	}
+	repo.mu.Lock()
+	repo.endpoints[endpointURLStr] = ep
+	repo.mu.Unlock()
+
+	checker := NewHTTPHealthChecker(repo, styledLogger, client)
+	ctx := context.Background()
+
+	// Probe 1: must succeed (healthy).
+	checker.checkEndpoint(ctx, ep)
+	repo.mu.RLock()
+	statusAfterProbe1 := repo.endpoints[endpointURLStr].Status
+	repo.mu.RUnlock()
+	if statusAfterProbe1 != domain.StatusHealthy {
+		t.Fatalf("probe 1: expected StatusHealthy, got %s", statusAfterProbe1)
+	}
+
+	// Probe 2: half-open connection error → endpoint must flip offline.
+	repo.mu.RLock()
+	ep2 := *repo.endpoints[endpointURLStr]
+	repo.mu.RUnlock()
+	checker.checkEndpoint(ctx, &ep2)
+	repo.mu.RLock()
+	statusAfterProbe2 := repo.endpoints[endpointURLStr].Status
+	repo.mu.RUnlock()
+	if statusAfterProbe2 != domain.StatusOffline {
+		t.Fatalf("probe 2: expected StatusOffline after half-open error, got %s", statusAfterProbe2)
+	}
+
+	// Probe 3: still failing (would stay stuck without the fix).
+	repo.mu.RLock()
+	ep3 := *repo.endpoints[endpointURLStr]
+	repo.mu.RUnlock()
+	checker.checkEndpoint(ctx, &ep3)
+	repo.mu.RLock()
+	statusAfterProbe3 := repo.endpoints[endpointURLStr].Status
+	repo.mu.RUnlock()
+	if statusAfterProbe3 != domain.StatusOffline {
+		t.Fatalf("probe 3: expected StatusOffline (still failing), got %s", statusAfterProbe3)
+	}
+
+	// Probe 4: successful probe after recovery (fresh connection).
+	// This simulates what happens after the circuit breaker half-open window expires
+	// and a new connection is dialled.  With DisableKeepAlives=true the transport
+	// always dials fresh, so a successful backend response recovers the endpoint.
+	//
+	// Reset the circuit breaker state to simulate the half-open window expiring.
+	checker.healthClient.circuitBreaker.RecordSuccess(healthURLStr)
+
+	repo.mu.RLock()
+	ep4 := *repo.endpoints[endpointURLStr]
+	repo.mu.RUnlock()
+	checker.checkEndpoint(ctx, &ep4)
+	repo.mu.RLock()
+	statusAfterProbe4 := repo.endpoints[endpointURLStr].Status
+	repo.mu.RUnlock()
+	if statusAfterProbe4 != domain.StatusHealthy {
+		t.Fatalf("probe 4: expected StatusHealthy after recovery, got %s (olla#73 regression — endpoint never self-heals)", statusAfterProbe4)
+	}
+}
+
+// TestIssue73_TransportPoisoning_DiscoveredWhileOffline is the regression test for
+// petersimmons1972/olla#73 path (a): olla first discovers the endpoint while the
+// backend is down → StatusOffline → backend comes up → endpoint must recover.
+//
+// This test verifies the circuit breaker's half-open recovery path: after the
+// circuit breaker timeout a single probe is allowed through; if it succeeds the
+// endpoint transitions back to StatusHealthy.
+func TestIssue73_TransportPoisoning_DiscoveredWhileOffline(t *testing.T) {
+	t.Parallel()
+
+	loggerCfg := &logger.Config{Level: "error", Theme: "default"}
+	log, cleanup, _ := logger.New(loggerCfg)
+	defer cleanup()
+	styledLogger := logger.NewPlainStyledLogger(log)
+
+	connErr := &halfOpenConnError{}
+
+	// Each failing checkEndpoint call consumes (DefaultMaxRetries+1) = 3 error
+	// responses because HealthClient.Check retries network errors.
+	// Three checkEndpoint failures → circuit breaker threshold (3) reached → open.
+	//
+	// Sequence layout (9 error responses for 3 failing probes, then 1 success):
+	//   probe 1 attempts 0,1,2: 3× err → fail 1 (circuit not yet open)
+	//   probe 2 attempts 0,1,2: 3× err → fail 2
+	//   probe 3 attempts 0,1,2: 3× err → fail 3 → circuit opens
+	//   probe 4 attempt 0:       1× 200 → recovery (fresh conn after circuit reset)
+	client := &sequentialHTTPClient{
+		responses: []sequentialResponse{
+			{err: connErr},    // probe 1 attempt 0
+			{err: connErr},    // probe 1 attempt 1
+			{err: connErr},    // probe 1 attempt 2 → fail 1
+			{err: connErr},    // probe 2 attempt 0
+			{err: connErr},    // probe 2 attempt 1
+			{err: connErr},    // probe 2 attempt 2 → fail 2
+			{err: connErr},    // probe 3 attempt 0
+			{err: connErr},    // probe 3 attempt 1
+			{err: connErr},    // probe 3 attempt 2 → fail 3, circuit opens
+			{statusCode: 200}, // probe 4: backend now up; fresh connection succeeds
+		},
+	}
+
+	repo := newMockRepository()
+	endpointURLStr := "http://127.0.0.1:28005"
+	healthURLStr := endpointURLStr + "/v1/models"
+	endpointURL, _ := url.Parse(endpointURLStr)
+	healthURL, _ := url.Parse(healthURLStr)
+
+	ep := &domain.Endpoint{
+		Name:                    "leviathan-embed-offline",
+		URL:                     endpointURL,
+		HealthCheckURL:          healthURL,
+		URLString:               endpointURLStr,
+		HealthCheckURLString:    healthURLStr,
+		Status:                  domain.StatusUnknown,
+		CheckTimeout:            2 * time.Second,
+		CheckInterval:           5 * time.Second,
+		BackoffMultiplier:       1,
+		CircuitBreakerThreshold: DefaultCircuitBreakerThreshold,
+		CircuitBreakerTimeout:   DefaultCircuitBreakerTimeout,
+	}
+	repo.mu.Lock()
+	repo.endpoints[endpointURLStr] = ep
+	repo.mu.Unlock()
+
+	checker := NewHTTPHealthChecker(repo, styledLogger, client)
+	ctx := context.Background()
+
+	// Three failures to open the circuit breaker.
+	for i := range 3 {
+		repo.mu.RLock()
+		current := *repo.endpoints[endpointURLStr]
+		repo.mu.RUnlock()
+		checker.checkEndpoint(ctx, &current)
+		repo.mu.RLock()
+		s := repo.endpoints[endpointURLStr].Status
+		repo.mu.RUnlock()
+		if s != domain.StatusOffline {
+			t.Fatalf("failure probe %d: expected StatusOffline, got %s", i+1, s)
+		}
+	}
+
+	// Circuit breaker is now open.  Simulate the half-open window expiring by
+	// directly resetting the circuit breaker, which is what happens when the
+	// configured timeout elapses in production.
+	checker.healthClient.circuitBreaker.RecordSuccess(healthURLStr)
+
+	// Recovery probe: backend is now up; with DisableKeepAlives=true a fresh
+	// connection is dialled and the probe succeeds.
+	repo.mu.RLock()
+	epRecovery := *repo.endpoints[endpointURLStr]
+	repo.mu.RUnlock()
+	checker.checkEndpoint(ctx, &epRecovery)
+	repo.mu.RLock()
+	finalStatus := repo.endpoints[endpointURLStr].Status
+	repo.mu.RUnlock()
+
+	if finalStatus != domain.StatusHealthy {
+		t.Fatalf("recovery probe: expected StatusHealthy, got %s (olla#73 regression — discovered-while-offline never self-heals)", finalStatus)
+	}
+}
+
+// TestIssue73_DefaultHealthCheckerUsesNoKeepAlives verifies that
+// NewHTTPHealthCheckerWithDefaults produces a client with DisableKeepAlives=true.
+// This is the canonical property test for the fix: if someone accidentally
+// reverts the transport config, this test will catch it.
+func TestIssue73_DefaultHealthCheckerUsesNoKeepAlives(t *testing.T) {
+	t.Parallel()
+
+	loggerCfg := &logger.Config{Level: "error", Theme: "default"}
+	log, cleanup, _ := logger.New(loggerCfg)
+	defer cleanup()
+	styledLogger := logger.NewPlainStyledLogger(log)
+
+	repo := newMockRepository()
+	checker := NewHTTPHealthCheckerWithDefaults(repo, styledLogger)
+
+	httpClient, ok := checker.healthClient.client.(*http.Client)
+	if !ok {
+		t.Fatal("health client is not an *http.Client — cannot inspect transport")
+	}
+	transport, ok := httpClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("http.Client.Transport is not an *http.Transport — cannot inspect DisableKeepAlives")
+	}
+	if !transport.DisableKeepAlives {
+		t.Error("NewHTTPHealthCheckerWithDefaults: DisableKeepAlives must be true to prevent transport poisoning (olla#73)")
+	}
+}
+
 // TestStopChecking_DoubleInvoke verifies concurrent double-stops do not panic.
 // Previously, two callers that both passed the isRunning.Load() guard could
 // race to close(stopCh), causing a "close of closed channel" panic.

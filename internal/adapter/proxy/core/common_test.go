@@ -72,6 +72,51 @@ func TestInjectEndpointAuth_Enabled_MissingAPIKey_ReturnsError(t *testing.T) {
 	assert.Empty(t, req.Header.Get(constants.HeaderAuthorization))
 }
 
+// --- custom outbound header auth (OutboundAuth) ---
+
+func TestInjectEndpointAuth_OutboundAuth_SetsCustomHeader(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://backend.local/test", nil)
+	endpoint := &domain.Endpoint{OutboundAuth: &domain.OutboundAuth{Header: "X-Api-Key", Value: "secret-123"}}
+
+	err := InjectEndpointAuth(req, endpoint, true)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "secret-123", req.Header.Get("X-Api-Key"))
+	assert.Empty(t, req.Header.Get(constants.HeaderAuthorization), "custom header mode must not also set Authorization")
+}
+
+func TestInjectEndpointAuth_OutboundAuth_DoesNotOverwriteExistingHeader(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://backend.local/test", nil)
+	req.Header.Set("X-Api-Key", "caller-supplied")
+	endpoint := &domain.Endpoint{OutboundAuth: &domain.OutboundAuth{Header: "X-Api-Key", Value: "endpoint-secret"}}
+
+	err := InjectEndpointAuth(req, endpoint, true)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "caller-supplied", req.Header.Get("X-Api-Key"))
+}
+
+// Probe case: an unset ${ENV} secret expands to "" at load; injection must fail closed.
+func TestInjectEndpointAuth_OutboundAuth_EmptyValue_ReturnsError(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://backend.local/test", nil)
+	endpoint := &domain.Endpoint{Name: "backend-1", OutboundAuth: &domain.OutboundAuth{Header: "X-Api-Key", Value: ""}}
+
+	err := InjectEndpointAuth(req, endpoint, true)
+
+	assert.ErrorIs(t, err, ErrEndpointAuthMisconfigured)
+	assert.Empty(t, req.Header.Get("X-Api-Key"), "fail closed: no header sent when secret is empty")
+}
+
+func TestInjectEndpointAuth_OutboundAuth_Disabled_IsNoop(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://backend.local/test", nil)
+	endpoint := &domain.Endpoint{OutboundAuth: &domain.OutboundAuth{Header: "X-Api-Key", Value: "secret-123"}}
+
+	err := InjectEndpointAuth(req, endpoint, false)
+
+	assert.NoError(t, err)
+	assert.Empty(t, req.Header.Get("X-Api-Key"), "flag off: custom header must not be set")
+}
+
 func TestCopyHeaders(t *testing.T) {
 	tests := []struct {
 		name            string

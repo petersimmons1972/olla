@@ -1079,3 +1079,98 @@ func TestLoadFromConfig_APIKeyEnvExpanded(t *testing.T) {
 		t.Fatalf("APIKey = %q, want %q", endpoints[0].APIKey, "expanded-key")
 	}
 }
+
+// --- custom outbound auth header (OutboundAuth) ---
+
+func TestLoadFromConfig_OutboundAuth_EnvExpandedAndLoaded(t *testing.T) {
+	t.Setenv("TEST_OLLA_OUTBOUND", "header-secret")
+
+	repo := NewStaticEndpointRepository()
+	configs := []config.EndpointConfig{
+		{
+			Name:          "outbound-endpoint",
+			URL:           "http://localhost:11434",
+			Type:          "ollama",
+			OutboundAuth:  &config.OutboundAuthConfig{Header: "X-Api-Key", Value: "${TEST_OLLA_OUTBOUND}"},
+			CheckInterval: 5 * time.Second,
+			CheckTimeout:  2 * time.Second,
+		},
+	}
+
+	if err := repo.LoadFromConfig(context.Background(), configs); err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+	endpoints, err := repo.GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll failed: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(endpoints))
+	}
+	oa := endpoints[0].OutboundAuth
+	if oa == nil {
+		t.Fatal("OutboundAuth = nil, want populated")
+	}
+	if oa.Header != "X-Api-Key" || oa.Value != "header-secret" {
+		t.Fatalf("OutboundAuth = %+v, want {X-Api-Key header-secret}", oa)
+	}
+}
+
+// Probe cases the "would a staff engineer approve this" review checks: each must
+// fail at config-load with a clear error.
+func TestLoadFromConfig_OutboundAuth_Rejected(t *testing.T) {
+	t.Parallel()
+
+	base := func() config.EndpointConfig {
+		return config.EndpointConfig{
+			Name:          "ep",
+			URL:           "http://localhost:11434",
+			Type:          "ollama",
+			CheckInterval: 5 * time.Second,
+			CheckTimeout:  2 * time.Second,
+		}
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*config.EndpointConfig)
+	}{
+		{
+			name: "api_key and outbound_auth both set",
+			mutate: func(c *config.EndpointConfig) {
+				c.APIKey = "k"
+				c.OutboundAuth = &config.OutboundAuthConfig{Header: "X-Api-Key", Value: "v"}
+			},
+		},
+		{
+			name: "empty header name",
+			mutate: func(c *config.EndpointConfig) {
+				c.OutboundAuth = &config.OutboundAuthConfig{Header: "", Value: "v"}
+			},
+		},
+		{
+			name: "invalid header token",
+			mutate: func(c *config.EndpointConfig) {
+				c.OutboundAuth = &config.OutboundAuthConfig{Header: "X Api Key", Value: "v"}
+			},
+		},
+		{
+			name: "reserved Authorization header",
+			mutate: func(c *config.EndpointConfig) {
+				c.OutboundAuth = &config.OutboundAuthConfig{Header: "authorization", Value: "v"}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := base()
+			tc.mutate(&cfg)
+			repo := NewStaticEndpointRepository()
+			if err := repo.LoadFromConfig(context.Background(), []config.EndpointConfig{cfg}); err == nil {
+				t.Error("expected load error, got nil")
+			}
+		})
+	}
+}

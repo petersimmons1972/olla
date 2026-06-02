@@ -104,9 +104,13 @@ func CopyHeaders(proxyReq, originalReq *http.Request) {
 	updateForwardedHeaders(proxyReq, originalReq)
 }
 
-// InjectEndpointAuth conditionally sets endpoint-scoped bearer auth.
+// InjectEndpointAuth conditionally sets endpoint-scoped outbound auth.
 // When disabled it is a no-op. When enabled, missing endpoint credentials fail safe.
-// It never overwrites an existing Authorization header supplied by the caller.
+// It never overwrites an auth header already supplied by the caller.
+//
+// Two mutually-exclusive modes (enforced at config-load):
+//   - APIKey      -> sets "Authorization: Bearer <APIKey>"
+//   - OutboundAuth -> sets a custom "<Header>: <Value>" (e.g. "X-Api-Key")
 //
 // Errors are wrapped with ErrEndpointAuthMisconfigured so the handler boundary
 // can return a sanitised response without leaking endpoint names or config detail.
@@ -116,6 +120,19 @@ func InjectEndpointAuth(proxyReq *http.Request, endpoint *domain.Endpoint, enabl
 	}
 	if proxyReq == nil || endpoint == nil {
 		return fmt.Errorf("%w: endpoint auth injection enabled but endpoint request context is missing", ErrEndpointAuthInternalError)
+	}
+	// Custom outbound header auth. Mutually exclusive with APIKey at config-load, so
+	// at most one branch applies. Empty value (e.g. an unset ${ENV} secret) fails
+	// closed rather than sending an empty header.
+	if endpoint.OutboundAuth != nil {
+		if endpoint.OutboundAuth.Value == "" {
+			return fmt.Errorf("%w: endpoint auth injection enabled but endpoint %q outbound_auth value is empty", ErrEndpointAuthMisconfigured, endpoint.Name)
+		}
+		if proxyReq.Header.Get(endpoint.OutboundAuth.Header) != "" {
+			return nil
+		}
+		proxyReq.Header.Set(endpoint.OutboundAuth.Header, endpoint.OutboundAuth.Value)
+		return nil
 	}
 	if endpoint.APIKey == "" {
 		return fmt.Errorf("%w: endpoint auth injection enabled but endpoint %q has no api_key configured", ErrEndpointAuthMisconfigured, endpoint.Name)

@@ -42,13 +42,14 @@ type ProxyConfig interface {
 
 // BaseProxyConfig contains common configuration fields for all proxy implementations
 type BaseProxyConfig struct {
-	ProxyPrefix         string
-	Profile             string
-	ConnectionTimeout   time.Duration
-	ConnectionKeepAlive time.Duration
-	ResponseTimeout     time.Duration
-	ReadTimeout         time.Duration
-	StreamBufferSize    int
+	ProxyPrefix                 string
+	Profile                     string
+	EnableEndpointAuthInjection bool
+	ConnectionTimeout           time.Duration
+	ConnectionKeepAlive         time.Duration
+	ResponseTimeout             time.Duration
+	ReadTimeout                 time.Duration
+	StreamBufferSize            int
 }
 
 // GetProxyProfile returns the proxy profile, defaulting to "auto" if not set
@@ -102,6 +103,12 @@ func (c *BaseProxyConfig) GetStreamBufferSize() int {
 		return DefaultStreamBufferSize
 	}
 	return c.StreamBufferSize
+}
+
+// GetEnableEndpointAuthInjection returns whether outbound endpoint credential injection is enabled.
+// This flag defaults to false — zero value is safe.
+func (c *BaseProxyConfig) GetEnableEndpointAuthInjection() bool {
+	return c.EnableEndpointAuthInjection
 }
 
 // Validate performs basic validation on the configuration

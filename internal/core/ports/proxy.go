@@ -36,6 +36,7 @@ type ProxyConfiguration interface {
 	GetReadTimeout() time.Duration
 	GetStreamBufferSize() int
 	GetProxyProfile() string
+	GetEnableEndpointAuthInjection() bool
 }
 
 type ProxyFactory interface {

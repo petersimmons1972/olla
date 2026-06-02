@@ -441,7 +441,9 @@ func (s *Service) prepareProxyRequest(ctx context.Context, r *http.Request, targ
 	// Copy headers
 	headerStart := time.Now()
 	core.CopyHeaders(proxyReq, r)
-	core.InjectEndpointAuth(proxyReq, endpoint)
+	if err := core.InjectEndpointAuth(proxyReq, endpoint, s.configuration.EnableEndpointAuthInjection); err != nil {
+		return nil, err
+	}
 	stats.HeaderProcessingMs = time.Since(headerStart).Milliseconds()
 
 	// Add model header

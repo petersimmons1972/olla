@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
 	"github.com/thushan/olla/internal/adapter/balancer"
+	proxycore "github.com/thushan/olla/internal/adapter/proxy/core"
 	"github.com/thushan/olla/internal/app/middleware"
 	"github.com/thushan/olla/internal/core/constants"
 	"github.com/thushan/olla/internal/core/domain"
@@ -394,6 +396,12 @@ func (a *Application) handleEndpointError(w http.ResponseWriter, pr *proxyReques
 // (learned this the hard way when users got html error messages appended to their json)
 func (a *Application) handleProxyError(w http.ResponseWriter, err error) {
 	if w.Header().Get(constants.HeaderContentType) == "" {
+		// Sanitize auth-injection errors: the detailed message (endpoint name,
+		// config detail) is already logged server-side; the caller must not see it.
+		if errors.Is(err, proxycore.ErrEndpointAuthMisconfigured) {
+			http.Error(w, "upstream authentication misconfiguration", http.StatusBadGateway)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Proxy error: %v", err), http.StatusBadGateway)
 	}
 }
@@ -471,7 +479,7 @@ func (a *Application) filterEndpointsByProfile(ctx context.Context, endpoints []
 
 	// stage 2: capability filtering (vision requests need vision models)
 	if profile != nil && profile.ModelCapabilities != nil && a.modelRegistry != nil {
-		capabilityFiltered := a.filterEndpointsByCapabilities(profileFiltered, profile, logger)
+		capabilityFiltered := a.filterEndpointsByCapabilities(ctx, profileFiltered, profile, logger)
 		if len(capabilityFiltered) > 0 {
 			profileFiltered = capabilityFiltered
 		}
@@ -589,7 +597,7 @@ func (a *Application) resolveAliasEndpoints(ctx context.Context, profile *domain
 	return aliasEndpoints
 }
 
-func (a *Application) filterEndpointsByCapabilities(endpoints []*domain.Endpoint, profile *domain.RequestProfile, logger logger.StyledLogger) []*domain.Endpoint {
+func (a *Application) filterEndpointsByCapabilities(ctx context.Context, endpoints []*domain.Endpoint, profile *domain.RequestProfile, logger logger.StyledLogger) []*domain.Endpoint {
 	if profile.ModelCapabilities == nil {
 		return endpoints
 	}
@@ -599,7 +607,7 @@ func (a *Application) filterEndpointsByCapabilities(endpoints []*domain.Endpoint
 		return endpoints
 	}
 
-	capableModels := a.findCapableModels(requiredCapabilities, logger)
+	capableModels := a.findCapableModels(ctx, requiredCapabilities, logger)
 	if len(capableModels) == 0 {
 		logger.Warn("No models found with required capabilities",
 			"model", profile.ModelName,
@@ -631,8 +639,7 @@ func (a *Application) extractRequiredCapabilities(caps *domain.ModelCapabilities
 
 // intersects capability sets to find models that support ALL requested features.
 // uses nil return to signal "no capability support" vs empty map for "no matches"
-func (a *Application) findCapableModels(requiredCapabilities []string, logger logger.StyledLogger) map[string]bool {
-	ctx := context.Background()
+func (a *Application) findCapableModels(ctx context.Context, requiredCapabilities []string, logger logger.StyledLogger) map[string]bool {
 	capableModels := make(map[string]bool)
 	hasCapabilitySupport := false
 

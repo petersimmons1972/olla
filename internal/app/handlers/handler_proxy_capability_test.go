@@ -210,7 +210,7 @@ func TestFilterEndpointsByCapabilities(t *testing.T) {
 				SupportedBy:       []string{domain.ProfileOllama, domain.ProfileOpenAICompatible},
 			}
 
-			filtered := app.filterEndpointsByCapabilities(endpoints, profile, styledLog)
+			filtered := app.filterEndpointsByCapabilities(context.Background(), endpoints, profile, styledLog)
 
 			assert.Len(t, filtered, tt.expectedCount, tt.description)
 		})

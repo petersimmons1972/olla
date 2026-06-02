@@ -16,6 +16,7 @@ type Model struct {
 	Family        string
 	Digest        string
 	Format        string
+	Capabilities  []string
 	Size          int64
 	ContextWindow int64
 }
@@ -153,7 +154,10 @@ func (u *DefaultUnifier) createUnifiedModel(model *Model, endpoint *domain.Endpo
 	state := u.extractor.MapModelState(model.Metadata, model.Size)
 	publisher := u.extractor.ExtractPublisher(model.Name, model.Metadata)
 
-	capabilities := inferCapabilitiesFromMetadata(modelType, model.Name, model.ContextWindow, model.Metadata)
+	capabilities := u.mergeCapabilities(
+		inferCapabilitiesFromMetadata(modelType, model.Name, model.ContextWindow, model.Metadata),
+		model.Capabilities,
+	)
 	confidence := u.extractor.CalculateConfidence(
 		model.Digest != "",
 		paramSize != "",
@@ -260,7 +264,10 @@ func (u *DefaultUnifier) mergeModel(unified *domain.UnifiedModel, model *Model, 
 		unified.Format = model.Format
 	}
 	modelType := u.extractor.ExtractModelType(model.Metadata)
-	newCaps := inferCapabilitiesFromMetadata(modelType, model.Name, model.ContextWindow, model.Metadata)
+	newCaps := u.mergeCapabilities(
+		inferCapabilitiesFromMetadata(modelType, model.Name, model.ContextWindow, model.Metadata),
+		model.Capabilities,
+	)
 	unified.Capabilities = u.mergeCapabilities(unified.Capabilities, newCaps)
 
 	totalSize := int64(0)
@@ -430,6 +437,10 @@ func (u *DefaultUnifier) applyModelInfo(model *Model, info *domain.ModelInfo) {
 	}
 	if !info.LastSeen.IsZero() {
 		model.Metadata["last_seen"] = info.LastSeen.Format(time.RFC3339)
+	}
+	if len(info.Capabilities) > 0 {
+		model.Capabilities = append([]string(nil), info.Capabilities...)
+		model.Metadata["capabilities"] = append([]string(nil), info.Capabilities...)
 	}
 }
 

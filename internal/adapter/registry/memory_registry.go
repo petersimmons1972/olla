@@ -440,7 +440,6 @@ func (r *MemoryModelRegistry) ModelsToString(models []*domain.ModelInfo) string 
 	return sb.String()
 }
 
-// GetModelsByCapability returns an empty list since the basic registry doesn't track capabilities
 func (r *MemoryModelRegistry) GetModelsByCapability(ctx context.Context, capability string) ([]*domain.UnifiedModel, error) {
 	select {
 	case <-ctx.Done():
@@ -448,9 +447,40 @@ func (r *MemoryModelRegistry) GetModelsByCapability(ctx context.Context, capabil
 	default:
 	}
 
-	// The basic memory registry doesn't track unified models or capabilities
-	// Return empty list to allow graceful degradation
-	return []*domain.UnifiedModel{}, nil
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	capability = strings.ToLower(strings.TrimSpace(capability))
+	if capability == "" {
+		return []*domain.UnifiedModel{}, nil
+	}
+
+	seen := make(map[string]struct{})
+	models := make([]*domain.UnifiedModel, 0)
+	r.endpointModels.Range(func(_ string, endpointData *domain.EndpointModels) bool {
+		for _, model := range endpointData.Models {
+			if model == nil || model.Name == "" {
+				continue
+			}
+			if _, exists := seen[model.Name]; exists {
+				continue
+			}
+			for _, cap := range model.Capabilities {
+				if strings.EqualFold(cap, capability) {
+					seen[model.Name] = struct{}{}
+					models = append(models, &domain.UnifiedModel{
+						ID:           model.Name,
+						Aliases:      []domain.AliasEntry{{Name: model.Name, Source: "registry"}},
+						Capabilities: append([]string(nil), model.Capabilities...),
+					})
+					break
+				}
+			}
+		}
+		return true
+	})
+
+	return models, nil
 }
 
 func (r *MemoryModelRegistry) updateStats() {

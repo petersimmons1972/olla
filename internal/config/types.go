@@ -95,7 +95,6 @@ type ProxyConfig struct {
 	Engine                      string               `yaml:"engine"`
 	LoadBalancer                string               `yaml:"load_balancer"`
 	Profile                     string               `yaml:"profile"`
-	EnableEndpointAuthInjection bool                 `yaml:"enable_endpoint_auth_injection,omitempty"`
 	StickySessions              StickySessionConfig  `yaml:"sticky_sessions"`
 	ConnectionTimeout           time.Duration        `yaml:"connection_timeout"`
 	ResponseTimeout             time.Duration        `yaml:"response_timeout"`
@@ -103,6 +102,7 @@ type ProxyConfig struct {
 	RetryBackoff                time.Duration        `yaml:"retry_backoff"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
 	StreamBufferSize            int                  `yaml:"stream_buffer_size"`
 	MaxRetries                  int                  `yaml:"max_retries"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
+	EnableEndpointAuthInjection bool                 `yaml:"enable_endpoint_auth_injection,omitempty"`
 }
 
 // DiscoveryConfig holds service discovery configuration

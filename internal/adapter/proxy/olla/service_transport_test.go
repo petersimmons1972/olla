@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,10 +90,11 @@ func TestCreateOptimisedTransport_FieldsAreDistinct(t *testing.T) {
 	}
 }
 
-func TestPrepareProxyRequest_InjectsAPIKey(t *testing.T) {
+func TestPrepareProxyRequest_FlagEnabled_InjectsAPIKey(t *testing.T) {
 	t.Parallel()
 
-	svc := &Service{}
+	svc := &Service{configuration: &Configuration{}}
+	svc.configuration.EnableEndpointAuthInjection = true
 	req, err := http.NewRequest(http.MethodPost, "http://client.local/v1/chat/completions", http.NoBody)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
@@ -111,17 +113,19 @@ func TestPrepareProxyRequest_InjectsAPIKey(t *testing.T) {
 	}
 }
 
-func TestPrepareProxyRequest_NoAPIKey_NoAuthHeader(t *testing.T) {
+func TestPrepareProxyRequest_FlagDisabled_NoAuthHeader(t *testing.T) {
 	t.Parallel()
 
-	svc := &Service{}
+	// Flag off (default) — no injection even if endpoint has an APIKey
+	svc := &Service{configuration: &Configuration{}}
+	svc.configuration.EnableEndpointAuthInjection = false
 	req, err := http.NewRequest(http.MethodPost, "http://client.local/v1/chat/completions", http.NoBody)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
 	targetURL, _ := url.Parse("http://backend.local/v1/chat/completions")
 	stats := &ports.RequestStats{StartTime: time.Now()}
-	endpoint := &domain.Endpoint{}
+	endpoint := &domain.Endpoint{APIKey: "would-be-injected-without-flag"}
 
 	proxyReq, err := svc.prepareProxyRequest(context.Background(), req, targetURL, endpoint, stats)
 	if err != nil {
@@ -129,6 +133,28 @@ func TestPrepareProxyRequest_NoAPIKey_NoAuthHeader(t *testing.T) {
 	}
 
 	if got := proxyReq.Header.Get(constants.HeaderAuthorization); got != "" {
-		t.Fatalf("Authorization header = %q, want empty", got)
+		t.Fatalf("Authorization header = %q, want empty (flag is off)", got)
+	}
+}
+
+func TestPrepareProxyRequest_FlagEnabled_MissingAPIKey_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	svc := &Service{configuration: &Configuration{}}
+	svc.configuration.EnableEndpointAuthInjection = true
+	req, err := http.NewRequest(http.MethodPost, "http://client.local/v1/chat/completions", http.NoBody)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	targetURL, _ := url.Parse("http://backend.local/v1/chat/completions")
+	stats := &ports.RequestStats{StartTime: time.Now()}
+	endpoint := &domain.Endpoint{Name: "backend-no-key"}
+
+	_, err = svc.prepareProxyRequest(context.Background(), req, targetURL, endpoint, stats)
+	if err == nil {
+		t.Fatal("expected error when endpoint auth injection is enabled without api_key")
+	}
+	if got := err.Error(); got == "" || !strings.Contains(got, "backend-no-key") {
+		t.Fatalf("error %q does not mention endpoint name", got)
 	}
 }

@@ -14,32 +14,60 @@ import (
 	"github.com/thushan/olla/internal/core/ports"
 )
 
-func TestInjectEndpointAuth_WithKey(t *testing.T) {
+// --- flag disabled (default-off) ---
+
+func TestInjectEndpointAuth_Disabled_IsNoop(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://backend.local/test", nil)
 	endpoint := &domain.Endpoint{APIKey: "test-key"}
 
-	InjectEndpointAuth(req, endpoint)
+	err := InjectEndpointAuth(req, endpoint, false)
 
-	assert.Equal(t, "Bearer test-key", req.Header.Get(constants.HeaderAuthorization))
+	assert.NoError(t, err)
+	assert.Empty(t, req.Header.Get(constants.HeaderAuthorization), "flag off: no header should be set even when APIKey is present")
 }
 
-func TestInjectEndpointAuth_NoKey(t *testing.T) {
+func TestInjectEndpointAuth_Disabled_NoKey_IsNoop(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://backend.local/test", nil)
 	endpoint := &domain.Endpoint{}
 
-	InjectEndpointAuth(req, endpoint)
+	err := InjectEndpointAuth(req, endpoint, false)
 
+	assert.NoError(t, err)
 	assert.Empty(t, req.Header.Get(constants.HeaderAuthorization))
 }
 
-func TestInjectEndpointAuth_DoesNotOverwriteExistingHeader(t *testing.T) {
+// --- flag enabled ---
+
+func TestInjectEndpointAuth_Enabled_WithKey(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://backend.local/test", nil)
+	endpoint := &domain.Endpoint{APIKey: "test-key"}
+
+	err := InjectEndpointAuth(req, endpoint, true)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "Bearer test-key", req.Header.Get(constants.HeaderAuthorization))
+}
+
+func TestInjectEndpointAuth_Enabled_DoesNotOverwriteExistingHeader(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://backend.local/test", nil)
 	req.Header.Set(constants.HeaderAuthorization, "Bearer existing-token")
 	endpoint := &domain.Endpoint{APIKey: "new-key"}
 
-	InjectEndpointAuth(req, endpoint)
+	err := InjectEndpointAuth(req, endpoint, true)
 
+	assert.NoError(t, err)
 	assert.Equal(t, "Bearer existing-token", req.Header.Get(constants.HeaderAuthorization))
+}
+
+func TestInjectEndpointAuth_Enabled_MissingAPIKey_ReturnsError(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://backend.local/test", nil)
+	endpoint := &domain.Endpoint{Name: "backend-1"}
+
+	err := InjectEndpointAuth(req, endpoint, true)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "backend-1")
+	assert.Empty(t, req.Header.Get(constants.HeaderAuthorization))
 }
 
 func TestCopyHeaders(t *testing.T) {

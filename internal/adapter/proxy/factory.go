@@ -47,6 +47,7 @@ func NewFactory(statsCollector ports.StatsCollector, metricsExtractor ports.Metr
 		sherpaConfig.ReadTimeout = config.GetReadTimeout()
 		sherpaConfig.StreamBufferSize = config.GetStreamBufferSize()
 		sherpaConfig.Profile = config.GetProxyProfile()
+		sherpaConfig.EnableEndpointAuthInjection = config.GetEnableEndpointAuthInjection()
 		return sherpa.NewService(discovery, selector, sherpaConfig, collector, metricsExtractor, logger)
 	})
 
@@ -60,6 +61,7 @@ func NewFactory(statsCollector ports.StatsCollector, metricsExtractor ports.Metr
 		ollaConfig.ReadTimeout = config.GetReadTimeout()
 		ollaConfig.StreamBufferSize = config.GetStreamBufferSize()
 		ollaConfig.Profile = config.GetProxyProfile()
+		ollaConfig.EnableEndpointAuthInjection = config.GetEnableEndpointAuthInjection()
 
 		if ollaSpecific, ok := config.(interface {
 			GetMaxIdleConns() int

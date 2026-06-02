@@ -26,8 +26,9 @@ const (
 )
 
 type Configuration struct {
-	ProxyPrefix string
-	Profile     string
+	ProxyPrefix                 string
+	Profile                     string
+	EnableEndpointAuthInjection bool
 
 	ConnectionTimeout   time.Duration
 	ConnectionKeepAlive time.Duration
@@ -87,6 +88,10 @@ func (c *Configuration) GetStreamBufferSize() int {
 		return DefaultStreamBufferSize
 	}
 	return c.StreamBufferSize
+}
+
+func (c *Configuration) GetEnableEndpointAuthInjection() bool {
+	return c.EnableEndpointAuthInjection
 }
 
 func (c *Configuration) GetIdleConnTimeout() time.Duration {

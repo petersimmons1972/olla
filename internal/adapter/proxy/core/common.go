@@ -1,6 +1,8 @@
 package core
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"slices"
@@ -90,16 +92,24 @@ func CopyHeaders(proxyReq, originalReq *http.Request) {
 	updateForwardedHeaders(proxyReq, originalReq)
 }
 
-// InjectEndpointAuth sets endpoint-scoped bearer auth when available.
-// It never overwrites an existing Authorization header.
-func InjectEndpointAuth(proxyReq *http.Request, endpoint *domain.Endpoint) {
-	if proxyReq == nil || endpoint == nil || endpoint.APIKey == "" {
-		return
+// InjectEndpointAuth conditionally sets endpoint-scoped bearer auth.
+// When disabled it is a no-op. When enabled, missing endpoint credentials fail safe.
+// It never overwrites an existing Authorization header supplied by the caller.
+func InjectEndpointAuth(proxyReq *http.Request, endpoint *domain.Endpoint, enabled bool) error {
+	if !enabled {
+		return nil
+	}
+	if proxyReq == nil || endpoint == nil {
+		return errors.New("endpoint auth injection enabled but endpoint request context is missing")
+	}
+	if endpoint.APIKey == "" {
+		return fmt.Errorf("endpoint auth injection enabled but endpoint %q has no api_key configured", endpoint.Name)
 	}
 	if proxyReq.Header.Get(constants.HeaderAuthorization) != "" {
-		return
+		return nil
 	}
 	proxyReq.Header.Set(constants.HeaderAuthorization, "Bearer "+endpoint.APIKey)
+	return nil
 }
 
 // SHERPA-81: Update X-Forwarded-* headers in request

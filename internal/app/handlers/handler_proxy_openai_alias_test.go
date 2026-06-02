@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,7 +40,7 @@ func TestFilterEndpointsByProfile_OpenAITypeAlias(t *testing.T) {
 		SupportedBy: []string{domain.ProfileOpenAICompatible},
 	}
 
-	result := app.filterEndpointsByProfile([]*domain.Endpoint{openaiEndpoint, compatibleEndpoint}, profile, styledLog)
+	result := app.filterEndpointsByProfile(context.Background(), []*domain.Endpoint{openaiEndpoint, compatibleEndpoint}, profile, styledLog)
 
 	// Both endpoints speak the OpenAI-compatible protocol; neither should be dropped.
 	// If the alias in IsCompatibleWith is removed, "openai" no longer matches

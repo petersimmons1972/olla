@@ -47,7 +47,7 @@ func TestModelFallbackWhenEndpointGoesOffline(t *testing.T) {
 
 	// Test filtering - only healthy endpoints passed in
 	healthyEndpoints := []*domain.Endpoint{macOllama}
-	filtered := app.filterEndpointsByProfile(healthyEndpoints, profile, mockLogger)
+	filtered := app.filterEndpointsByProfile(context.Background(), healthyEndpoints, profile, mockLogger)
 
 	// Should return mac-ollama even though it doesn't have the model in registry
 	// because local-ollama (which has the model) is offline
@@ -101,7 +101,7 @@ func TestModelRoutingWhenAllHealthy(t *testing.T) {
 
 	// Test filtering
 	healthyEndpoints := []*domain.Endpoint{localOllama, macOllama}
-	filtered := app.filterEndpointsByProfile(healthyEndpoints, profile, mockLogger)
+	filtered := app.filterEndpointsByProfile(context.Background(), healthyEndpoints, profile, mockLogger)
 
 	// Should return only local-ollama since it has the model
 	if len(filtered) != 1 {

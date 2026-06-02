@@ -133,12 +133,12 @@ func (a *Application) getProviderEndpoints(ctx context.Context, providerType str
 	providerProfile := a.createProviderProfile(providerType)
 	providerProfile.Path = pr.targetPath
 
-	providerEndpoints := a.filterEndpointsByProfile(endpoints, providerProfile, pr.requestLogger)
+	providerEndpoints := a.filterEndpointsByProfile(ctx, endpoints, providerProfile, pr.requestLogger)
 
 	// If the request has specific requirements (e.g., needs vision support),
 	// apply those filters on top of the provider constraint
 	if pr.profile != nil && len(pr.profile.SupportedBy) > 0 {
-		providerEndpoints = a.filterEndpointsByProfile(providerEndpoints, pr.profile, pr.requestLogger)
+		providerEndpoints = a.filterEndpointsByProfile(ctx, providerEndpoints, pr.profile, pr.requestLogger)
 	}
 
 	return providerEndpoints, nil

@@ -823,6 +823,70 @@ func TestFCEndpointRepository_PollSyncsModelRegistryWithCapabilitiesAndRoutingNa
 	}
 }
 
+// TestFCEndpointRepository_PollCapabilitiesFromRegistryNotNameInference is the
+// regression test for petersimmons1972/olla#56. Before the fix (PR #62), the
+// domain.ModelInfo constructed during FC pre-registration only set Name: model.Name;
+// the Capabilities field was omitted, so routing relied on name-pattern heuristics
+// (inferCapabilitiesFromMetadata) rather than the authoritative FC value.
+//
+// This test uses an opaque service name ("xray-embed-svc") that does NOT match any
+// embedding name pattern, ensuring that capabilities must come from the FC registry
+// field and not from name-pattern inference.
+func TestFCEndpointRepository_PollCapabilitiesFromRegistryNotNameInference(t *testing.T) {
+	// "xray-embed-svc" is deliberately chosen to avoid matching any embedding
+	// name-pattern heuristic (no "bge", "embed", "nomic", "e5" etc.)
+	entries := []FCRegistryEntry{
+		{
+			Host: "oblivion.petersimmons.com",
+			Models: []FCModelSpec{
+				{
+					Name:         "xray-embed-svc",
+					Port:         9001,
+					Capabilities: []string{"embeddings"},
+				},
+			},
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	repo := discovery.NewStaticEndpointRepository()
+	modelRegistry := registry.NewMemoryModelRegistry(newTestLogger())
+	poller := discovery.NewFCDiscoveryPollerWithRegistry(repo, modelRegistry, srv.URL, newTestLogger())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("Poll() returned error: %v", err)
+	}
+
+	// The model registry entry for "xray-embed-svc" must carry the FC-authoritative
+	// "embeddings" capability even though the name matches no embedding name-pattern.
+	models, err := modelRegistry.GetModelsForEndpoint(ctx, "http://oblivion.petersimmons.com:9001")
+	if err != nil {
+		t.Fatalf("GetModelsForEndpoint error: %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("expected 1 model, got %d", len(models))
+	}
+	model := models[0]
+	if model.Name != "xray-embed-svc" {
+		t.Fatalf("expected model name xray-embed-svc, got %s", model.Name)
+	}
+	if len(model.Capabilities) != 1 || model.Capabilities[0] != "embeddings" {
+		t.Fatalf("capabilities must come from FC registry (not name inference): got %+v", model.Capabilities)
+	}
+}
+
 func TestFCEndpointRepository_PollUsesExtraArgsAliasForRoutingName(t *testing.T) {
 	// llama-cpp embed endpoints use --alias BAAI/bge-m3 but the service name
 	// in the FC registry is "embed-w6800". Requests arrive with model=BAAI/bge-m3,

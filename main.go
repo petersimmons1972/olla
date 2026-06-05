@@ -19,23 +19,11 @@ import (
 
 	"github.com/thushan/olla/internal/app"
 	"github.com/thushan/olla/internal/config"
-	"github.com/thushan/olla/internal/env"
 	"github.com/thushan/olla/internal/logger"
 	"github.com/thushan/olla/internal/util"
 	"github.com/thushan/olla/internal/version"
 	"github.com/thushan/olla/pkg/format"
 	"github.com/thushan/olla/pkg/nerdstats"
-)
-
-const (
-	DefaultLoggerLevel   = "info"
-	DefaultPrettyLogs    = true
-	DefaultFileOutput    = true
-	DefaultLogDir        = "./logs"
-	DefaultLogSizeMB     = 1
-	DefaultLogMaxBackups = 7
-	DefaultLogMaxAgeDays = 14
-	DefaultTheme         = "default"
 )
 
 var (
@@ -77,8 +65,15 @@ func main() {
 		vlog.Printf(theme.ColourProfiler("Profiling server started at http://%s/debug/pprof/\n"), profileAddress)
 	}
 
-	// Setup logging
-	lcfg := buildLoggerConfig()
+	// Load configuration
+	cfg, err := config.Load(configFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Setup logging after loading configuration so YAML logging options are applied.
+	lcfg := logger.BuildConfigFromConfig(cfg)
 	logInstance, styledLogger, cleanup, err := logger.NewWithTheme(lcfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialise logger: %v\n", err)
@@ -105,12 +100,6 @@ func main() {
 		shutdownTime = time.Now()
 		cancel()
 	}()
-
-	// Load configuration
-	cfg, err := config.Load(configFile)
-	if err != nil {
-		logger.FatalWithLogger(logInstance, "Failed to load configuration", "error", err)
-	}
 
 	// Validate model alias configuration at startup
 	if err = cfg.ValidateModelAliases(); err != nil {
@@ -200,17 +189,4 @@ func reportProcessStats(logger logger.StyledLogger, startTime time.Time) {
 		"uptime", format.Duration(stats.Uptime),
 		"avg_gc_pause", nerdstats.CalculateAverageGCPause(stats),
 	)
-}
-
-func buildLoggerConfig() *logger.Config {
-	return &logger.Config{
-		Level:      env.GetEnvOrDefault("OLLA_LOG_LEVEL", DefaultLoggerLevel),
-		PrettyLogs: env.GetEnvBoolOrDefault("OLLA_PRETTY_LOGS", DefaultPrettyLogs),
-		FileOutput: env.GetEnvBoolOrDefault("OLLA_FILE_OUTPUT", DefaultFileOutput),
-		LogDir:     env.GetEnvOrDefault("OLLA_LOG_DIR", DefaultLogDir),
-		MaxSize:    env.GetEnvIntOrDefault("OLLA_LOG_SIZE_MB", DefaultLogSizeMB),
-		MaxBackups: env.GetEnvIntOrDefault("OLLA_LOG_MAX_BACKUPS", DefaultLogMaxBackups),
-		MaxAge:     env.GetEnvIntOrDefault("OLLA_LOG_MAX_AGE_DAYS", DefaultLogMaxAgeDays),
-		Theme:      env.GetEnvOrDefault("OLLA_THEME", DefaultTheme),
-	}
 }

@@ -3,8 +3,10 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
@@ -13,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/thushan/olla/internal/adapter/inspector"
 	"github.com/thushan/olla/internal/adapter/registry/profile"
+	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/core/constants"
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/logger"
@@ -172,6 +175,95 @@ func TestBodyInspectorIntegration(t *testing.T) {
 	}
 }
 
+// TestProxyHandler_PreservesModelRoutingRejectionStatus validates model routing
+// rejections return their intended HTTP status with routing observability headers.
+func TestProxyHandler_PreservesModelRoutingRejectionStatus(t *testing.T) {
+	t.Run("model not found", func(t *testing.T) {
+		app := createProxyHandlerAppForRoutingTest(t, &mockModelRegistryWithRoutingDecision{
+			decisionStatus: http.StatusNotFound,
+			decisionReason: constants.RoutingReasonModelNotFound,
+		})
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/chat/completions",
+			bytes.NewBufferString(`{"model":"missing-model","messages":[]}`),
+		)
+		req.Header.Set(constants.HeaderContentType, constants.ContentTypeJSON)
+		w := httptest.NewRecorder()
+
+		app.proxyHandler(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, "strict", w.Header().Get(constants.HeaderXOllaRoutingStrategy))
+		assert.Equal(t, "rejected", w.Header().Get(constants.HeaderXOllaRoutingDecision))
+		assert.Equal(t, constants.RoutingReasonModelNotFound, w.Header().Get(constants.HeaderXOllaRoutingReason))
+		assert.Contains(t, w.Body.String(), "routing rejected request for model \"missing-model\"")
+	})
+
+	t.Run("model unavailable", func(t *testing.T) {
+		app := createProxyHandlerAppForRoutingTest(t, &mockModelRegistryWithRoutingDecision{
+			decisionStatus: http.StatusServiceUnavailable,
+			decisionReason: constants.RoutingReasonModelUnavailable,
+		})
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/chat/completions",
+			bytes.NewBufferString(`{"model":"busy-model","messages":[]}`),
+		)
+		req.Header.Set(constants.HeaderContentType, constants.ContentTypeJSON)
+		w := httptest.NewRecorder()
+
+		app.proxyHandler(w, req)
+
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		assert.Equal(t, "strict", w.Header().Get(constants.HeaderXOllaRoutingStrategy))
+		assert.Equal(t, "rejected", w.Header().Get(constants.HeaderXOllaRoutingDecision))
+		assert.Equal(t, constants.RoutingReasonModelUnavailable, w.Header().Get(constants.HeaderXOllaRoutingReason))
+		assert.Contains(t, w.Body.String(), "routing rejected request for model \"busy-model\"")
+	})
+}
+
+func createProxyHandlerAppForRoutingTest(t *testing.T, registry *mockModelRegistryWithRoutingDecision) *Application {
+	t.Helper()
+
+	mockLogger := &mockStyledLogger{}
+	profileFactory, err := profile.NewFactoryWithDefaults()
+	require.NoError(t, err)
+
+	inspectorFactory := inspector.NewFactory(profileFactory, mockLogger)
+	chain := inspectorFactory.CreateChain()
+	chain.AddInspector(inspectorFactory.CreatePathInspector())
+	bodyInspector, err := inspectorFactory.CreateBodyInspector()
+	require.NoError(t, err)
+	chain.AddInspector(bodyInspector)
+
+	endpoint, err := url.Parse("http://localhost:11434")
+	require.NoError(t, err)
+
+	return &Application{
+		Config: config.DefaultConfig(),
+		logger: mockLogger,
+		// model routing status checks happen in getCompatibleEndpoints before any
+		// proxy execution, so no proxy service is required in this test path.
+		modelRegistry: registry,
+		discoveryService: &mockDiscoveryServiceWithFunc{
+			getHealthyEndpointsFunc: func(context.Context) ([]*domain.Endpoint, error) {
+				return []*domain.Endpoint{{
+					Name:      "test-openai",
+					URL:       endpoint,
+					URLString: endpoint.String(),
+					Type:      domain.ProfileOpenAI,
+					Status:    domain.StatusHealthy,
+				}}, nil
+			},
+		},
+		inspectorChain: chain,
+		profileFactory: profileFactory,
+	}
+}
+
 // Simple mock implementations for testing
 type mockStyledLogger struct {
 	underlying *slog.Logger
@@ -259,4 +351,41 @@ func (m *mockSimpleModelRegistry) GetRoutableEndpointsForModel(ctx context.Conte
 		Action:   "routed",
 		Reason:   "model found",
 	}, nil
+}
+
+type mockModelRegistryWithRoutingDecision struct {
+	baseMockRegistry
+	decisionStatus int
+	decisionReason string
+}
+
+func (m *mockModelRegistryWithRoutingDecision) GetRoutableEndpointsForModel(ctx context.Context, modelName string, healthyEndpoints []*domain.Endpoint) ([]*domain.Endpoint, *domain.ModelRoutingDecision, error) {
+	_ = ctx
+	_ = modelName
+	_ = healthyEndpoints
+
+	if m.decisionStatus <= 0 {
+		return healthyEndpoints, &domain.ModelRoutingDecision{
+			Strategy:   "strict",
+			Action:     "routed",
+			Reason:     "model available",
+			StatusCode: http.StatusOK,
+		}, nil
+	}
+
+	if m.decisionStatus == http.StatusNotFound || m.decisionStatus == http.StatusServiceUnavailable {
+		return nil, &domain.ModelRoutingDecision{
+			Strategy:   "strict",
+			Action:     "rejected",
+			Reason:     m.decisionReason,
+			StatusCode: m.decisionStatus,
+		}, nil
+	}
+
+	return nil, &domain.ModelRoutingDecision{
+		Strategy:   "strict",
+		Action:     "rejected",
+		Reason:     m.decisionReason,
+		StatusCode: m.decisionStatus,
+	}, errors.New("routing failed")
 }

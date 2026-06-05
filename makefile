@@ -247,7 +247,7 @@ docker-build:
 docker-run:
 	@echo "Running Docker image with local config (amd64)..."
 	@docker run --rm -it \
-		-p 40114:40114 \
+		-p 127.0.0.1:40114:40114 \
 		-v "$(shell pwd)/config/config.local.yaml:/config/config.yaml:ro" \
 		-e OLLA_CONFIG_FILE=/config/config.yaml \
 		ghcr.io/thushan/olla:local-amd64

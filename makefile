@@ -219,10 +219,12 @@ docker-build-local:
 	@echo "Building Docker image locally (without goreleaser) for $(DOCKER_ARCH)..."
 	@echo "Building olla binary to root..."
 	@CGO_ENABLED=0 GOOS=linux GOARCH=$(DOCKER_ARCH) go build $(LDFLAGS) -o olla .
+	@echo "Generating Docker config..."
+	@bash ./scripts/generate-container-config.sh
 	@echo "Building Docker image..."
 	@docker build -t ghcr.io/thushan/olla:local-$(DOCKER_ARCH) .
 	@echo "Cleaning up binary..."
-	@rm -f olla
+	@rm -f olla config/docker.yaml
 	@echo "Docker image built: ghcr.io/thushan/olla:local-$(DOCKER_ARCH)"
 	@docker images --filter reference='*olla*local*'
 

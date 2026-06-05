@@ -146,7 +146,10 @@ func (a *Application) buildSystemSummary(all, healthy []*domain.Endpoint, proxy 
 	}
 
 	// ratios
-	healthyRatio := float64(len(healthy)) / float64(len(all))
+	healthyRatio := 0.0
+	if len(all) > 0 {
+		healthyRatio = float64(len(healthy)) / float64(len(all))
+	}
 	var systemSuccessRate float64
 	if proxy.TotalRequests > 0 {
 		systemSuccessRate = float64(proxy.SuccessfulRequests) / float64(proxy.TotalRequests) * 100.0
@@ -154,6 +157,8 @@ func (a *Application) buildSystemSummary(all, healthy []*domain.Endpoint, proxy 
 
 	var status string
 	switch {
+	case len(all) == 0:
+		status = statusCritical
 	case healthyRatio < 0.5 || systemSuccessRate < 90.0:
 		status = statusCritical
 	case healthyRatio < 0.8 || systemSuccessRate < 95.0:

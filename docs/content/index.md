@@ -66,7 +66,7 @@ Get up and running with Olla in minutes:
 === "Using Docker"
     ```bash
     # If you have ollama or lmstudio locally
-    docker run -t -p 40114:40114 ghcr.io/thushan/olla:latest
+    docker run -t -p 127.0.0.1:40114:40114 ghcr.io/thushan/olla:latest
     ```
 
 === "Using Go"

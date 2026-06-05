@@ -87,7 +87,7 @@ Create a minimal `config.local.yaml` and mount it into the container:
 
 ```bash
 docker run -v $(pwd)/config.local.yaml:/app/config/config.local.yaml \
-    -p 40114:40114 \
+    -p 127.0.0.1:40114:40114 \
     ghcr.io/thushan/olla:latest
 ```
 
@@ -104,7 +104,7 @@ docker run --rm ghcr.io/thushan/olla:latest \
 
 # Edit, then mount
 docker run -v $(pwd)/config.local.yaml:/app/config/config.local.yaml \
-    -p 40114:40114 \
+    -p 127.0.0.1:40114:40114 \
     ghcr.io/thushan/olla:latest
 ```
 
@@ -123,7 +123,7 @@ vi config/config.local.yaml
 
 # Mount the entire directory
 docker run -v $(pwd)/config:/app/config \
-    -p 40114:40114 \
+    -p 127.0.0.1:40114:40114 \
     ghcr.io/thushan/olla:latest
 ```
 

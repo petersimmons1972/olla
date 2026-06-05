@@ -62,7 +62,7 @@ The first file found is merged on top of the built-in defaults. Only one YAML fi
 
     # Run with your config
     docker run -v $(pwd)/config.local.yaml:/app/config/config.local.yaml \
-        -p 40114:40114 \
+        -p 127.0.0.1:40114:40114 \
         ghcr.io/thushan/olla:latest
     ```
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/core/constants"
 )
 
@@ -24,10 +25,15 @@ func (a *Application) discoveryRefreshHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	refreshed := true
+	if a.Config != nil && a.Config.Discovery.Type == config.DefaultDiscoveryType {
+		refreshed = false
+	}
+
 	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(DiscoveryRefreshResponse{
 		Timestamp: time.Now(),
-		Refreshed: true,
+		Refreshed: refreshed,
 	})
 }

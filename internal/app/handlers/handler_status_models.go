@@ -51,18 +51,6 @@ type ModelStatusResponse struct {
 	TotalEndpoints int                 `json:"total_endpoints"`
 }
 
-// these are pooled to avoid allocations
-var (
-	modelSummaryPool  = make([]ModelSummary, 0, maxModelsCapacity)
-	endpointNamesPool = make(map[string]string, maxEndpointNamesLength)
-	familyGroupPool   = make(map[string][]string, 16)
-	uniqueModelsPool  = make(map[string]*ModelSummary, maxModelsCapacity)
-	endpointSetPool   = make(map[string]struct{}, 8)
-	capabilitiesPool  = make([]string, 0, 4)
-	stringSlicePool   = make([]string, 0, 8)
-	modelGroupPool    = make([]ModelGroupSummary, 0, 16)
-)
-
 func (a *Application) modelsStatusHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -81,14 +69,12 @@ func (a *Application) modelsStatusHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	for k := range endpointNamesPool {
-		delete(endpointNamesPool, k)
-	}
+	endpointNames := make(map[string]string, len(endpoints))
 	for _, ep := range endpoints {
-		endpointNamesPool[ep.URLString] = ep.Name
+		endpointNames[ep.URLString] = ep.Name
 	}
 
-	allModels := a.buildModelSummaries(modelMap, endpointNamesPool)
+	allModels := a.buildModelSummaries(modelMap, endpointNames)
 
 	response := ModelStatusResponse{
 		Timestamp:      time.Now(),
@@ -110,9 +96,7 @@ func (a *Application) modelsStatusHandler(w http.ResponseWriter, r *http.Request
 }
 
 func (a *Application) buildModelSummaries(modelMap map[string]*domain.EndpointModels, endpointNames map[string]string) []ModelSummary {
-	for k := range uniqueModelsPool {
-		delete(uniqueModelsPool, k)
-	}
+	uniqueModels := make(map[string]*ModelSummary, maxModelsCapacity)
 
 	for endpointURL, endpointModels := range modelMap {
 		endpointName := endpointNames[endpointURL]
@@ -121,19 +105,9 @@ func (a *Application) buildModelSummaries(modelMap map[string]*domain.EndpointMo
 		}
 
 		for _, model := range endpointModels.Models {
-			existing, exists := uniqueModelsPool[model.Name]
+			existing, exists := uniqueModels[model.Name]
 			if !exists {
-				stringSlicePool = stringSlicePool[:0]
-				stringSlicePool = append(stringSlicePool, endpointName)
-				endpoints := make([]string, len(stringSlicePool))
-				copy(endpoints, stringSlicePool)
-
-				stringSlicePool = stringSlicePool[:0]
-				stringSlicePool = append(stringSlicePool, endpointURL)
-				endpointURLs := make([]string, len(stringSlicePool))
-				copy(endpointURLs, stringSlicePool)
-
-				uniqueModelsPool[model.Name] = a.createModelSummary(model, endpointURLs)
+				uniqueModels[model.Name] = a.createModelSummary(model, []string{endpointURL})
 			} else {
 				existing.Endpoints = append(existing.Endpoints, endpointName)
 				// existing.EndpointURLs = append(existing.EndpointURLs, endpointURL)
@@ -145,16 +119,12 @@ func (a *Application) buildModelSummaries(modelMap map[string]*domain.EndpointMo
 		}
 	}
 
-	modelSummaryPool = modelSummaryPool[:0]
-	if cap(modelSummaryPool) < len(uniqueModelsPool) {
-		modelSummaryPool = make([]ModelSummary, 0, len(uniqueModelsPool))
+	modelSummaries := make([]ModelSummary, 0, len(uniqueModels))
+	for _, summary := range uniqueModels {
+		modelSummaries = append(modelSummaries, *summary)
 	}
 
-	for _, summary := range uniqueModelsPool {
-		modelSummaryPool = append(modelSummaryPool, *summary)
-	}
-
-	return modelSummaryPool
+	return modelSummaries
 }
 
 func (a *Application) createModelSummary(model *domain.ModelInfo, endpoints []string) *ModelSummary {
@@ -186,23 +156,21 @@ func (a *Application) createModelSummary(model *domain.ModelInfo, endpoints []st
 }
 
 func (a *Application) groupModelsByFamily(models []ModelSummary) map[string][]string {
-	for k := range familyGroupPool {
-		delete(familyGroupPool, k)
-	}
+	familyGroup := make(map[string][]string, 16)
 
 	for i := range models {
 		family := models[i].Family
 		if family == "" {
 			family = familyUnknown
 		}
-		familyGroupPool[family] = append(familyGroupPool[family], models[i].Name)
+		familyGroup[family] = append(familyGroup[family], models[i].Name)
 	}
 
-	for family := range familyGroupPool {
-		sort.Strings(familyGroupPool[family])
+	for family := range familyGroup {
+		sort.Strings(familyGroup[family])
 	}
 
-	return familyGroupPool
+	return familyGroup
 }
 
 func (a *Application) groupModelsByFamilyWithDetails(models []ModelSummary) []ModelGroupSummary {
@@ -216,30 +184,22 @@ func (a *Application) groupModelsByFamilyWithDetails(models []ModelSummary) []Mo
 		familyMap[family] = append(familyMap[family], models[i])
 	}
 
-	modelGroupPool = modelGroupPool[:0]
-	if cap(modelGroupPool) < len(familyMap) {
-		modelGroupPool = make([]ModelGroupSummary, 0, len(familyMap))
-	}
+	modelGroups := make([]ModelGroupSummary, 0, len(familyMap))
 
 	for family, familyModels := range familyMap {
-		for k := range endpointSetPool {
-			delete(endpointSetPool, k)
-		}
+		endpointSet := make(map[string]struct{}, len(familyModels))
 
 		for i := range familyModels {
 			for j := range familyModels[i].Endpoints {
-				endpointSetPool[familyModels[i].Endpoints[j]] = struct{}{}
+				endpointSet[familyModels[i].Endpoints[j]] = struct{}{}
 			}
 		}
 
-		stringSlicePool = stringSlicePool[:0]
-		for ep := range endpointSetPool {
-			stringSlicePool = append(stringSlicePool, ep)
+		endpoints := make([]string, 0, len(endpointSet))
+		for ep := range endpointSet {
+			endpoints = append(endpoints, ep)
 		}
-		sort.Strings(stringSlicePool)
-
-		endpoints := make([]string, len(stringSlicePool))
-		copy(endpoints, stringSlicePool)
+		sort.Strings(endpoints)
 
 		sort.Slice(familyModels, func(i, j int) bool {
 			return familyModels[i].Name < familyModels[j].Name
@@ -252,20 +212,20 @@ func (a *Application) groupModelsByFamilyWithDetails(models []ModelSummary) []Mo
 			Endpoints:  endpoints,
 		}
 
-		modelGroupPool = append(modelGroupPool, group)
+		modelGroups = append(modelGroups, group)
 	}
 
-	sort.Slice(modelGroupPool, func(i, j int) bool {
-		if modelGroupPool[i].Family == familyUnknown {
+	sort.Slice(modelGroups, func(i, j int) bool {
+		if modelGroups[i].Family == familyUnknown {
 			return false
 		}
-		if modelGroupPool[j].Family == familyUnknown {
+		if modelGroups[j].Family == familyUnknown {
 			return true
 		}
-		return modelGroupPool[i].Family < modelGroupPool[j].Family
+		return modelGroups[i].Family < modelGroups[j].Family
 	})
 
-	return modelGroupPool
+	return modelGroups
 }
 
 func (a *Application) getRecentModels(models []ModelSummary, limit int) []ModelSummary {
@@ -282,35 +242,35 @@ func (a *Application) getRecentModels(models []ModelSummary, limit int) []ModelS
 const modelTypeEmbeddings = "embeddings"
 
 func (a *Application) inferCapabilities(details *domain.ModelDetails) []string {
-	capabilitiesPool = capabilitiesPool[:0]
+	capabilities := make([]string, 0, 4)
 
 	if details.Type != nil {
 		switch *details.Type {
 		case "vlm":
-			capabilitiesPool = append(capabilitiesPool, "vision", "multimodal")
+			capabilities = append(capabilities, "vision", "multimodal")
 		case modelTypeEmbeddings:
-			capabilitiesPool = append(capabilitiesPool, "embeddings", "vector_search")
+			capabilities = append(capabilities, "embeddings", "vector_search")
 		case "llm":
-			capabilitiesPool = append(capabilitiesPool, "text_generation", "chat")
+			capabilities = append(capabilities, "text_generation", "chat")
 		}
 	}
 
 	if details.MaxContextLength != nil && *details.MaxContextLength > 100000 {
-		capabilitiesPool = append(capabilitiesPool, "long_context")
+		capabilities = append(capabilities, "long_context")
 	}
 
 	if details.QuantizationLevel != nil {
 		quant := *details.QuantizationLevel
 		if strings.Contains(quant, "fp16") || strings.Contains(quant, "bf16") {
-			capabilitiesPool = append(capabilitiesPool, "high_precision")
+			capabilities = append(capabilities, "high_precision")
 		}
 	}
 
-	if len(capabilitiesPool) == 0 {
+	if len(capabilities) == 0 {
 		return nil
 	}
-	result := make([]string, len(capabilitiesPool))
-	copy(result, capabilitiesPool)
+	result := make([]string, len(capabilities))
+	copy(result, capabilities)
 	return result
 }
 

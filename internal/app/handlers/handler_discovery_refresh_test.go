@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/core/domain"
 )
 
@@ -37,7 +38,10 @@ func (m *manualRefreshDiscoveryService) UpdateEndpointStatus(ctx context.Context
 
 func TestDiscoveryRefreshHandler_RefreshesDiscovery(t *testing.T) {
 	discovery := &manualRefreshDiscoveryService{}
-	app := &Application{discoveryService: discovery}
+	app := &Application{
+		Config:           &config.Config{},
+		discoveryService: discovery,
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/internal/discovery/refresh", nil)
 	w := httptest.NewRecorder()
@@ -52,6 +56,30 @@ func TestDiscoveryRefreshHandler_RefreshesDiscovery(t *testing.T) {
 	err := json.NewDecoder(w.Body).Decode(&response)
 	require.NoError(t, err)
 	assert.True(t, response.Refreshed)
+	assert.False(t, response.Timestamp.IsZero())
+}
+
+func TestDiscoveryRefreshHandler_StaticDiscoveryReportsNoOp(t *testing.T) {
+	discovery := &manualRefreshDiscoveryService{}
+	app := &Application{
+		Config: &config.Config{
+			Discovery: config.DiscoveryConfig{Type: config.DefaultDiscoveryType},
+		},
+		discoveryService: discovery,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/internal/discovery/refresh", nil)
+	w := httptest.NewRecorder()
+
+	app.discoveryRefreshHandler(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 1, discovery.refreshCalls)
+
+	var response DiscoveryRefreshResponse
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.False(t, response.Refreshed)
 	assert.False(t, response.Timestamp.IsZero())
 }
 

@@ -308,6 +308,201 @@ func TestGetModelsByCapability_ContextCancellation(t *testing.T) {
 	}
 }
 
+func TestGetUnifiedModels_ReturnsLastGoodDuringRefresh(t *testing.T) {
+	ctx := context.Background()
+	registry := createTestUnifiedRegistry()
+
+	chatModel := &domain.UnifiedModel{
+		ID:               "llama3:latest",
+		Aliases:          []domain.AliasEntry{{Name: "llama3:latest", Source: "vllm"}},
+		SourceEndpoints:  []domain.SourceEndpoint{{EndpointURL: "http://chat:8000", EndpointName: "chat", NativeName: "llama3:latest"}},
+		Capabilities:     []string{"text-generation", "chat", "completion"},
+		LastSeen:         time.Now(),
+		MaxContextLength: ptrInt64(8192),
+	}
+	embedModel := &domain.UnifiedModel{
+		ID:              "BAAI/bge-m3",
+		Aliases:         []domain.AliasEntry{{Name: "BAAI/bge-m3", Source: "vllm"}},
+		SourceEndpoints: []domain.SourceEndpoint{{EndpointURL: "http://embed:8000", EndpointName: "embed", NativeName: "BAAI/bge-m3"}},
+		Capabilities:    []string{"embeddings", "similarity", "vector-search"},
+		LastSeen:        time.Now(),
+	}
+	registry.globalUnified.Store(chatModel.ID, chatModel)
+	registry.globalUnified.Store(embedModel.ID, embedModel)
+
+	seeded, err := registry.GetUnifiedModels(ctx)
+	if err != nil {
+		t.Fatalf("GetUnifiedModels failed while seeding last-good snapshot: %v", err)
+	}
+	if len(seeded) != 2 {
+		t.Fatalf("expected seeded snapshot to contain 2 models, got %d", len(seeded))
+	}
+
+	registry.unificationMutex.Lock()
+	defer registry.unificationMutex.Unlock()
+
+	registry.globalUnified.Delete(embedModel.ID)
+	registry.globalUnified.Store(chatModel.ID, &domain.UnifiedModel{
+		ID:              chatModel.ID,
+		Aliases:         chatModel.Aliases,
+		SourceEndpoints: chatModel.SourceEndpoints,
+		LastSeen:        time.Now(),
+	})
+
+	models, err := registry.GetUnifiedModels(ctx)
+	if err != nil {
+		t.Fatalf("GetUnifiedModels failed during refresh: %v", err)
+	}
+
+	assertUnifiedSnapshotHasModelWithCapabilities(t, models, "llama3:latest", "text-generation")
+	assertUnifiedSnapshotHasModelWithCapabilities(t, models, "BAAI/bge-m3", "embeddings")
+}
+
+func TestGetUnifiedModels_ReturnsLastGoodWhenCurrentSnapshotHasEmptyCapabilities(t *testing.T) {
+	ctx := context.Background()
+	registry := createTestUnifiedRegistry()
+
+	goodModel := &domain.UnifiedModel{
+		ID:              "llama3:latest",
+		Aliases:         []domain.AliasEntry{{Name: "llama3:latest", Source: "vllm"}},
+		SourceEndpoints: []domain.SourceEndpoint{{EndpointURL: "http://chat:8000", EndpointName: "chat", NativeName: "llama3:latest"}},
+		Capabilities:    []string{"text-generation", "chat", "completion"},
+		LastSeen:        time.Now(),
+	}
+	registry.globalUnified.Store(goodModel.ID, goodModel)
+
+	seeded, err := registry.GetUnifiedModels(ctx)
+	if err != nil {
+		t.Fatalf("GetUnifiedModels failed while seeding last-good snapshot: %v", err)
+	}
+	assertUnifiedSnapshotHasModelWithCapabilities(t, seeded, "llama3:latest", "text-generation")
+
+	registry.globalUnified.Store(goodModel.ID, &domain.UnifiedModel{
+		ID:              goodModel.ID,
+		Aliases:         goodModel.Aliases,
+		SourceEndpoints: goodModel.SourceEndpoints,
+		LastSeen:        time.Now(),
+	})
+
+	models, err := registry.GetUnifiedModels(ctx)
+	if err != nil {
+		t.Fatalf("GetUnifiedModels failed with invalid current snapshot: %v", err)
+	}
+
+	assertUnifiedSnapshotHasModelWithCapabilities(t, models, "llama3:latest", "text-generation")
+}
+
+func TestGetUnifiedModels_ReturnsLastGoodWhenCurrentSnapshotIsEmpty(t *testing.T) {
+	ctx := context.Background()
+	registry := createTestUnifiedRegistry()
+
+	embedModel := &domain.UnifiedModel{
+		ID:              "BAAI/bge-m3",
+		Aliases:         []domain.AliasEntry{{Name: "BAAI/bge-m3", Source: "vllm"}},
+		SourceEndpoints: []domain.SourceEndpoint{{EndpointURL: "http://embed:8000", EndpointName: "embed", NativeName: "BAAI/bge-m3"}},
+		Capabilities:    []string{"embeddings", "similarity", "vector-search"},
+		LastSeen:        time.Now(),
+	}
+	registry.globalUnified.Store(embedModel.ID, embedModel)
+
+	seeded, err := registry.GetUnifiedModels(ctx)
+	if err != nil {
+		t.Fatalf("GetUnifiedModels failed while seeding last-good snapshot: %v", err)
+	}
+	assertUnifiedSnapshotHasModelWithCapabilities(t, seeded, "BAAI/bge-m3", "embeddings")
+
+	registry.globalUnified.Delete(embedModel.ID)
+
+	models, err := registry.GetUnifiedModels(ctx)
+	if err != nil {
+		t.Fatalf("GetUnifiedModels failed with empty current snapshot: %v", err)
+	}
+
+	assertUnifiedSnapshotHasModelWithCapabilities(t, models, "BAAI/bge-m3", "embeddings")
+}
+
+func TestRemoveEndpoint_ClearsLastGoodWhenModelIsRemoved(t *testing.T) {
+	ctx := context.Background()
+	registry := createTestUnifiedRegistry()
+
+	embedModel := &domain.UnifiedModel{
+		ID:              "BAAI/bge-m3",
+		Aliases:         []domain.AliasEntry{{Name: "BAAI/bge-m3", Source: "vllm"}},
+		SourceEndpoints: []domain.SourceEndpoint{{EndpointURL: "http://embed:8000", EndpointName: "embed", NativeName: "BAAI/bge-m3"}},
+		Capabilities:    []string{"embeddings", "similarity", "vector-search"},
+		LastSeen:        time.Now(),
+	}
+	registry.globalUnified.Store(embedModel.ID, embedModel)
+
+	seeded, err := registry.GetUnifiedModels(ctx)
+	if err != nil {
+		t.Fatalf("GetUnifiedModels failed while seeding last-good snapshot: %v", err)
+	}
+	assertUnifiedSnapshotHasModelWithCapabilities(t, seeded, "BAAI/bge-m3", "embeddings")
+
+	if err := registry.RemoveEndpoint(ctx, "http://embed:8000"); err != nil {
+		t.Fatalf("RemoveEndpoint failed: %v", err)
+	}
+
+	models, err := registry.GetUnifiedModels(ctx)
+	if err != nil {
+		t.Fatalf("GetUnifiedModels failed after endpoint removal: %v", err)
+	}
+
+	assertUnifiedSnapshotDoesNotHaveModel(t, models, "BAAI/bge-m3")
+}
+
+func assertUnifiedSnapshotHasModelWithCapabilities(t *testing.T, models []*domain.UnifiedModel, id string, capabilities ...string) {
+	t.Helper()
+
+	for _, model := range models {
+		if model == nil || model.ID != id {
+			continue
+		}
+		for _, capability := range capabilities {
+			if !containsString(model.Capabilities, capability) {
+				t.Fatalf("model %q capabilities = %v, want %q", id, model.Capabilities, capability)
+			}
+		}
+		return
+	}
+
+	t.Fatalf("model %q not found in snapshot: %v", id, unifiedModelIDs(models))
+}
+
+func assertUnifiedSnapshotDoesNotHaveModel(t *testing.T, models []*domain.UnifiedModel, id string) {
+	t.Helper()
+
+	for _, model := range models {
+		if model != nil && model.ID == id {
+			t.Fatalf("model %q should not be present in snapshot: %v", id, unifiedModelIDs(models))
+		}
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func unifiedModelIDs(models []*domain.UnifiedModel) []string {
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		if model != nil {
+			ids = append(ids, model.ID)
+		}
+	}
+	return ids
+}
+
+func ptrInt64(value int64) *int64 {
+	return &value
+}
+
 // TestEndpointSetCaching verifies that the endpoint set cache improves performance
 func TestEndpointSetCaching(t *testing.T) {
 	ctx := context.Background()

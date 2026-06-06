@@ -14,10 +14,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/thushan/olla/internal/adapter/inspector"
+	"github.com/thushan/olla/internal/adapter/registry"
 	"github.com/thushan/olla/internal/adapter/registry/profile"
 	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/core/constants"
 	"github.com/thushan/olla/internal/core/domain"
+	"github.com/thushan/olla/internal/core/ports"
 	"github.com/thushan/olla/internal/logger"
 )
 
@@ -222,6 +224,41 @@ func TestProxyHandler_PreservesModelRoutingRejectionStatus(t *testing.T) {
 		assert.Equal(t, "rejected", w.Header().Get(constants.HeaderXOllaRoutingDecision))
 		assert.Equal(t, constants.RoutingReasonModelUnavailable, w.Header().Get(constants.HeaderXOllaRoutingReason))
 		assert.Contains(t, w.Body.String(), "routing rejected request for model \"busy-model\"")
+	})
+
+	t.Run("alias_no_valid_endpoints_preserves_strict_model_not_found", func(t *testing.T) {
+		app := createProxyHandlerAppForRoutingTest(t, &mockModelRegistryWithRoutingDecision{
+			decisionStatus: http.StatusNotFound,
+			decisionReason: constants.RoutingReasonModelNotFound,
+		})
+		app.aliasResolver = registry.NewAliasResolver(map[string][]string{
+			"missing-alias": {"backend-only-model"},
+		}, app.logger)
+		proxyCalled := false
+		app.proxyService = &mockProxyService{
+			proxyFunc: func(ctx context.Context, w http.ResponseWriter, r *http.Request, endpoints []*domain.Endpoint, stats *ports.RequestStats, logger logger.StyledLogger) error {
+				proxyCalled = true
+				w.WriteHeader(http.StatusOK)
+				return nil
+			},
+		}
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/chat/completions",
+			bytes.NewBufferString(`{"model":"missing-alias","messages":[]}`),
+		)
+		req.Header.Set(constants.HeaderContentType, constants.ContentTypeJSON)
+		w := httptest.NewRecorder()
+
+		app.proxyHandler(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.False(t, proxyCalled, "strict alias rejection must not fall through to proxy execution")
+		assert.Equal(t, "strict", w.Header().Get(constants.HeaderXOllaRoutingStrategy))
+		assert.Equal(t, "rejected", w.Header().Get(constants.HeaderXOllaRoutingDecision))
+		assert.Equal(t, constants.RoutingReasonModelNotFound, w.Header().Get(constants.HeaderXOllaRoutingReason))
+		assert.Contains(t, w.Body.String(), "routing rejected request for model \"missing-alias\"")
 	})
 }
 

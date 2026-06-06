@@ -611,7 +611,7 @@ func (a *Application) resolveAliasEndpoints(ctx context.Context, profile *domain
 		if err != nil {
 			logFields = append(logFields, "error", err)
 		}
-		logger.Warn("Model alias resolved to no endpoints, falling back to standard routing",
+		logger.Warn("Model alias resolved to no endpoints, checking standard routing",
 			logFields...)
 
 		// fall through to standard routing in case the alias name itself is a known model
@@ -620,7 +620,7 @@ func (a *Application) resolveAliasEndpoints(ctx context.Context, profile *domain
 			profile.RoutingDecision = decision
 		}
 		if routeErr != nil || len(routableEndpoints) == 0 {
-			return candidates
+			return []*domain.Endpoint{}
 		}
 		return routableEndpoints
 	}

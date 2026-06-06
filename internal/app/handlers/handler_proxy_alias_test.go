@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"testing"
 
@@ -94,18 +95,16 @@ func TestResolveAliasEndpoints_NoMatchingEndpoints(t *testing.T) {
 		},
 	}
 
-	// Registry has no models matching the alias
-	modelRegistry := &mockSimpleModelRegistry{
-		endpointsForModel: map[string][]string{},
-	}
-
 	aliases := map[string][]string{
 		"nonexistent-alias": {"model-not-in-registry"},
 	}
 	aliasResolver := registry.NewAliasResolver(aliases, styledLog)
 
 	app := &Application{
-		modelRegistry: modelRegistry,
+		modelRegistry: &mockModelRegistryWithRoutingDecision{
+			decisionStatus: http.StatusNotFound,
+			decisionReason: constants.RoutingReasonModelNotFound,
+		},
 		aliasResolver: aliasResolver,
 		logger:        styledLog,
 	}
@@ -116,10 +115,12 @@ func TestResolveAliasEndpoints_NoMatchingEndpoints(t *testing.T) {
 
 	result := app.resolveAliasEndpoints(t.Context(), profile, candidates, styledLog)
 
-	// Should fall back to all candidates since alias resolved to no endpoints
-	// and standard routing also finds nothing useful
-	assert.Len(t, result, 1)
-	assert.Contains(t, result, candidates[0])
+	assert.Empty(t, result)
+	require.NotNil(t, profile.RoutingDecision)
+	assert.Equal(t, "strict", profile.RoutingDecision.Strategy)
+	assert.Equal(t, "rejected", profile.RoutingDecision.Action)
+	assert.Equal(t, constants.RoutingReasonModelNotFound, profile.RoutingDecision.Reason)
+	assert.Equal(t, http.StatusNotFound, profile.RoutingDecision.StatusCode)
 }
 
 func TestResolveAliasEndpoints_SelfReferencingAlias(t *testing.T) {

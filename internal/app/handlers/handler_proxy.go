@@ -39,8 +39,8 @@ type proxyRequest struct {
 }
 
 type routingDecisionError struct {
-	message  string
 	decision *domain.ModelRoutingDecision
+	message  string
 }
 
 func (e *routingDecisionError) Error() string {

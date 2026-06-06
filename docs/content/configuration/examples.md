@@ -1054,7 +1054,7 @@ Example showing environment variable overrides:
 # Set via environment variables
 export OLLA_SERVER_PORT=8080
 export OLLA_PROXY_ENGINE=olla
-export OLLA_LOG_LEVEL=debug
+export OLLA_LOGGING_LEVEL=debug
 
 # Minimal config.yaml
 ```

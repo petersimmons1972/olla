@@ -126,8 +126,7 @@ logging:
 
 ```bash
 # Development environment
-export OLLA_LOG_LEVEL=debug
-export OLLA_SERVER_REQUEST_LOGGING=true
+export OLLA_LOGGING_LEVEL=debug
 
 # Use local config
 export OLLA_CONFIG_FILE=config/config.local.yaml
@@ -281,7 +280,7 @@ make docker-run
       "program": "${workspaceFolder}",
       "args": ["--config", "config/config.local.yaml"],
       "env": {
-        "OLLA_LOG_LEVEL": "debug"
+        "OLLA_LOGGING_LEVEL": "debug"
       }
     }
   ]

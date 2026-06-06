@@ -138,7 +138,7 @@ OLLA_<SECTION>_<KEY>=value
 # Examples
 OLLA_SERVER_PORT=8080
 OLLA_PROXY_ENGINE=olla
-OLLA_LOG_LEVEL=debug
+OLLA_LOGGING_LEVEL=debug
 ```
 
 **When to use environment variables:**
@@ -148,6 +148,8 @@ OLLA_LOG_LEVEL=debug
 - Container orchestration (Kubernetes, Docker Swarm)
 
 **When to use config files instead:**
+
+- Nested configuration, including discovery endpoints, endpoint health checks, filters, and model aliases
 
 - Complex or nested structures (endpoints, profiles, discovery blocks)
 - Anything that benefits from version control or peer review

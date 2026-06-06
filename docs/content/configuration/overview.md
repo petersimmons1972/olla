@@ -356,15 +356,16 @@ When enabled, displays:
 
 ## Environment Variables
 
-All configuration values can be overridden with environment variables:
+Common scalar settings can be overridden with supported environment variables:
 
 ```bash
 OLLA_SERVER_PORT=8080
 OLLA_PROXY_ENGINE=olla
-OLLA_LOG_LEVEL=debug
+OLLA_LOGGING_LEVEL=debug
 ```
 
-Pattern: `OLLA_<SECTION>_<KEY>` in uppercase with underscores.
+Use the supported variables listed in the [configuration reference](reference.md#environment-variables). Complex nested
+settings such as discovery endpoints and per-endpoint health checks must stay in YAML.
 
 ## Validation
 

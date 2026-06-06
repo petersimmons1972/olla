@@ -780,8 +780,11 @@ OLLA_SHOW_NERD_STATS=true
 OLLA_CONFIG_FILE=config/config.yaml
 ```
 
-Deprecated or unsupported variables shown in older docs (for example, `OLLA_LOG_LEVEL`, `OLLA_SERVER_REQUEST_LOGGING`,
-and `OLLA_SERVER_RATE_LIMITS_*`) are intentionally unsupported by the current env override path and must not be used.
+Legacy variables shown in older docs, such as `OLLA_SERVER_REQUEST_LOGGING` and nested `OLLA_SERVER_RATE_LIMITS_*`, are
+not supported by the current config override path and must not be used.
+
+`OLLA_LOG_LEVEL` is still accepted by early logger bootstrap for startup logging. For configuration-driven logging,
+prefer `OLLA_LOGGING_LEVEL`.
 
 ## Duration Format
 

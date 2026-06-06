@@ -29,7 +29,7 @@ This guide covers monitoring and observability for Olla deployments.
 > - JSON logging for structured monitoring
 > - No external dependencies required
 > 
-> **Environment Variables**: `OLLA_LOG_LEVEL`, `OLLA_LOG_FORMAT`
+> **Environment Variables**: `OLLA_LOGGING_LEVEL`, `OLLA_LOGGING_FORMAT`
 
 ## Monitoring Overview
 

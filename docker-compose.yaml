@@ -5,7 +5,7 @@ services:
     image: ghcr.io/thushan/olla:latest
     container_name: olla
     ports:
-      - "40114:40114"
+      - "127.0.0.1:40114:40114"
     volumes:
       # Mount your local config (comment out if using default)
       - ./config/config.local.yaml:/config/config.yaml:ro

@@ -80,13 +80,13 @@ bash <(curl -s https://raw.githubusercontent.com/thushan/olla/main/install.sh)
 # Docker (automatically pulls correct architecture)
 docker run -t \
   --name olla \
-  -p 40114:40114 \
+  -p 127.0.0.1:40114:40114 \
   ghcr.io/thushan/olla:latest
 
 # Or explicitly specify platform (e.g., for ARM64)
 docker run --platform linux/arm64 -t \
   --name olla \
-  -p 40114:40114 \
+  -p 127.0.0.1:40114:40114 \
   ghcr.io/thushan/olla:latest
 ```
 ```bash
@@ -103,7 +103,7 @@ git clone https://github.com/thushan/olla.git && cd olla && make build-release
 ```bash
 # Build Docker image locally (no goreleaser required)
 git clone https://github.com/thushan/olla.git && cd olla && make docker-build-local
-docker run -p 40114:40114 ghcr.io/thushan/olla:local
+docker run -p 127.0.0.1:40114:40114 ghcr.io/thushan/olla:local
 ```
 
 ### Verification

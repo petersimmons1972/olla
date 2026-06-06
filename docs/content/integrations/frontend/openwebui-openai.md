@@ -90,7 +90,7 @@ services:
     container_name: olla
     restart: unless-stopped
     ports:
-      - "40114:40114"
+      - "127.0.0.1:40114:40114"
     volumes:
       - ./olla.yaml:/app/config.yaml:ro
       - ./logs:/app/logs

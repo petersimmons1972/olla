@@ -230,7 +230,7 @@ make docker-build
 
 ```bash
 # Run the locally built image
-docker run -p 40114:40114 \
+docker run -p 127.0.0.1:40114:40114 \
   -v "$(pwd)/config/config.local.yaml:/config/config.yaml:ro" \
   -e OLLA_CONFIG_FILE=/config/config.yaml \
   ghcr.io/thushan/olla:local
@@ -241,7 +241,7 @@ make docker-run
 
 !!! warning "Docker Network Configuration"
 
-    When running Olla in Docker, ensure your config has `server.host: 0.0.0.0` (not `localhost`). Inside the container, `localhost` binds to the loopback interface and won't be accessible from the host machine, even with published ports (`-p 40114:40114`). Use `0.0.0.0` to listen on all interfaces.
+    When running Olla in Docker, ensure your config has `server.host: 0.0.0.0` (not `localhost`). Inside the container, `localhost` binds to the loopback interface and won't be accessible from the host machine, even with published ports (`-p 127.0.0.1:40114:40114`). Use `0.0.0.0` to listen on all interfaces.
 
 ## IDE Configuration
 

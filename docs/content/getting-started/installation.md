@@ -40,7 +40,7 @@ Get Olla running on your system with these installation options.
     # for locally installed lmstudio, ollama or vllm
     docker run -t \
         --name olla \
-        -p 40114:40114 \
+        -p 127.0.0.1:40114:40114 \
         ghcr.io/thushan/olla:latest
     ```
 

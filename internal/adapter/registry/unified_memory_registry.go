@@ -24,7 +24,9 @@ type UnifiedMemoryModelRegistry struct {
 	globalUnified     *xsync.Map[string, *domain.UnifiedModel]         // UnifiedID -> UnifiedModel (merged across endpoints)
 	endpoints         *xsync.Map[string, *domain.Endpoint]             // URL -> Endpoint mapping
 	modelEndpointSets *xsync.Map[string, *xsync.Map[string, struct{}]] // ModelID -> Set of endpoint URLs (cached for fast lookup)
+	lastGoodUnified   []*domain.UnifiedModel
 	unificationMutex  sync.Mutex
+	lastGoodMutex     sync.RWMutex
 }
 
 // NewUnifiedMemoryModelRegistry creates a new registry with unification support
@@ -215,13 +217,158 @@ func (r *UnifiedMemoryModelRegistry) GetUnifiedModels(ctx context.Context) ([]*d
 	default:
 	}
 
-	var models []*domain.UnifiedModel
-	r.globalUnified.Range(func(id string, model *domain.UnifiedModel) bool {
-		models = append(models, model)
-		return true
-	})
+	if !r.unificationMutex.TryLock() {
+		if models, ok := r.loadLastGoodUnifiedModels(); ok {
+			return models, nil
+		}
+		return []*domain.UnifiedModel{}, nil
+	}
+	defer r.unificationMutex.Unlock()
+
+	models := r.snapshotGlobalUnifiedModels()
+	if isAdvertisableUnifiedSnapshot(models) {
+		r.storeLastGoodUnifiedModels(models)
+		return models, nil
+	}
+
+	if lastGood, ok := r.loadLastGoodUnifiedModels(); ok {
+		return lastGood, nil
+	}
 
 	return models, nil
+}
+
+func (r *UnifiedMemoryModelRegistry) snapshotGlobalUnifiedModels() []*domain.UnifiedModel {
+	models := make([]*domain.UnifiedModel, 0)
+	r.globalUnified.Range(func(id string, model *domain.UnifiedModel) bool {
+		models = append(models, cloneUnifiedModel(model))
+		return true
+	})
+	return models
+}
+
+func (r *UnifiedMemoryModelRegistry) storeLastGoodUnifiedModels(models []*domain.UnifiedModel) {
+	r.lastGoodMutex.Lock()
+	defer r.lastGoodMutex.Unlock()
+	r.lastGoodUnified = cloneUnifiedModels(models)
+}
+
+func (r *UnifiedMemoryModelRegistry) loadLastGoodUnifiedModels() ([]*domain.UnifiedModel, bool) {
+	r.lastGoodMutex.RLock()
+	defer r.lastGoodMutex.RUnlock()
+	if len(r.lastGoodUnified) == 0 {
+		return nil, false
+	}
+	return cloneUnifiedModels(r.lastGoodUnified), true
+}
+
+func (r *UnifiedMemoryModelRegistry) clearLastGoodUnifiedModels() {
+	r.lastGoodMutex.Lock()
+	defer r.lastGoodMutex.Unlock()
+	r.lastGoodUnified = nil
+}
+
+func (r *UnifiedMemoryModelRegistry) refreshLastGoodFromAuthoritativeSnapshot() {
+	models := r.snapshotGlobalUnifiedModels()
+	if isAdvertisableUnifiedSnapshot(models) {
+		r.storeLastGoodUnifiedModels(models)
+		return
+	}
+	r.clearLastGoodUnifiedModels()
+}
+
+func isAdvertisableUnifiedSnapshot(models []*domain.UnifiedModel) bool {
+	if len(models) == 0 {
+		return false
+	}
+	for _, model := range models {
+		if model == nil || model.ID == "" || len(model.SourceEndpoints) == 0 || len(model.Capabilities) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneUnifiedModels(models []*domain.UnifiedModel) []*domain.UnifiedModel {
+	cloned := make([]*domain.UnifiedModel, 0, len(models))
+	for _, model := range models {
+		cloned = append(cloned, cloneUnifiedModel(model))
+	}
+	return cloned
+}
+
+func cloneUnifiedModel(model *domain.UnifiedModel) *domain.UnifiedModel {
+	if model == nil {
+		return nil
+	}
+
+	modelCopy := &domain.UnifiedModel{
+		ID:               model.ID,
+		Family:           model.Family,
+		Variant:          model.Variant,
+		ParameterSize:    model.ParameterSize,
+		ParameterCount:   model.ParameterCount,
+		Quantization:     model.Quantization,
+		Format:           model.Format,
+		PromptTemplateID: model.PromptTemplateID,
+		DiskSize:         model.DiskSize,
+		LastSeen:         model.LastSeen,
+	}
+
+	if model.MaxContextLength != nil {
+		maxContextLength := *model.MaxContextLength
+		modelCopy.MaxContextLength = &maxContextLength
+	}
+
+	if model.Metadata != nil {
+		modelCopy.Metadata = make(map[string]interface{}, len(model.Metadata))
+		for key, value := range model.Metadata {
+			modelCopy.Metadata[key] = value
+		}
+	}
+
+	if model.Aliases != nil {
+		modelCopy.Aliases = make([]domain.AliasEntry, len(model.Aliases))
+		copy(modelCopy.Aliases, model.Aliases)
+	}
+
+	if model.Capabilities != nil {
+		modelCopy.Capabilities = make([]string, len(model.Capabilities))
+		copy(modelCopy.Capabilities, model.Capabilities)
+	}
+
+	if model.SourceEndpoints != nil {
+		modelCopy.SourceEndpoints = make([]domain.SourceEndpoint, len(model.SourceEndpoints))
+		for i, endpoint := range model.SourceEndpoints {
+			modelCopy.SourceEndpoints[i] = endpoint
+			if endpoint.StateInfo != nil {
+				modelCopy.SourceEndpoints[i].StateInfo = cloneEndpointStateInfo(endpoint.StateInfo)
+			}
+		}
+	}
+
+	return modelCopy
+}
+
+func cloneEndpointStateInfo(info *domain.EndpointStateInfo) *domain.EndpointStateInfo {
+	if info == nil {
+		return nil
+	}
+
+	cloned := &domain.EndpointStateInfo{
+		State:               info.State,
+		LastStateChange:     info.LastStateChange,
+		ConsecutiveFailures: info.ConsecutiveFailures,
+		LastError:           info.LastError,
+	}
+	if info.Metadata != nil {
+		cloned.Metadata = make(map[string]interface{}, len(info.Metadata))
+		for key, value := range info.Metadata {
+			cloned.Metadata[key] = value
+		}
+	}
+
+	return cloned
 }
 
 // GetUnifiedModel returns a specific unified model by ID or alias
@@ -359,6 +506,8 @@ func (r *UnifiedMemoryModelRegistry) RemoveEndpoint(ctx context.Context, endpoin
 		}
 		return true
 	})
+
+	r.refreshLastGoodFromAuthoritativeSnapshot()
 
 	return nil
 }

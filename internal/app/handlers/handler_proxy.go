@@ -38,6 +38,29 @@ type proxyRequest struct {
 	isStreaming    bool
 }
 
+type routingDecisionError struct {
+	decision *domain.ModelRoutingDecision
+	message  string
+}
+
+func (e *routingDecisionError) Error() string {
+	if e == nil {
+		return "request rejected by routing policy"
+	}
+	return e.message
+}
+
+func (e *routingDecisionError) StatusCode() int {
+	if e == nil || e.decision == nil {
+		return http.StatusBadGateway
+	}
+	return e.decision.StatusCode
+}
+
+type statusCoder interface {
+	StatusCode() int
+}
+
 func (a *Application) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	pr := a.initializeProxyRequest(r)
 
@@ -223,6 +246,16 @@ func (a *Application) getCompatibleEndpoints(ctx context.Context, pr *proxyReque
 	}
 
 	compatibleEndpoints := a.filterEndpointsByProfile(ctx, endpoints, pr.profile, pr.requestLogger)
+	if len(compatibleEndpoints) == 0 && pr.profile != nil && pr.profile.RoutingDecision != nil && pr.profile.RoutingDecision.StatusCode > 0 {
+		return nil, &routingDecisionError{
+			message: fmt.Sprintf(
+				"routing rejected request for model %q: %s",
+				pr.profile.ModelName,
+				pr.profile.RoutingDecision.Reason,
+			),
+			decision: pr.profile.RoutingDecision,
+		}
+	}
 
 	return compatibleEndpoints, nil
 }
@@ -388,7 +421,32 @@ func (a *Application) buildLogFields(pr *proxyRequest, duration time.Duration) [
 
 func (a *Application) handleEndpointError(w http.ResponseWriter, pr *proxyRequest, err error) {
 	pr.requestLogger.Error("Failed to get endpoints", "error", err)
-	http.Error(w, fmt.Sprintf("Service unavailable: %v", err), http.StatusBadGateway)
+	statusCode := http.StatusBadGateway
+	if sc, ok := err.(statusCoder); ok {
+		statusCode = sc.StatusCode()
+	}
+
+	if pr.profile != nil {
+		a.setRoutingDecisionHeadersFromProfile(w, pr.profile)
+	}
+
+	http.Error(w, fmt.Sprintf("Service unavailable: %v", err), statusCode)
+}
+
+func (a *Application) setRoutingDecisionHeadersFromProfile(w http.ResponseWriter, pr *domain.RequestProfile) {
+	if pr == nil || pr.RoutingDecision == nil {
+		return
+	}
+
+	if pr.RoutingDecision.Strategy != "" {
+		w.Header().Set(constants.HeaderXOllaRoutingStrategy, pr.RoutingDecision.Strategy)
+	}
+	if pr.RoutingDecision.Action != "" {
+		w.Header().Set(constants.HeaderXOllaRoutingDecision, pr.RoutingDecision.Action)
+	}
+	if pr.RoutingDecision.Reason != "" {
+		w.Header().Set(constants.HeaderXOllaRoutingReason, pr.RoutingDecision.Reason)
+	}
 }
 
 // only send error response if we haven't started streaming yet.

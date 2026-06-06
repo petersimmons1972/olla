@@ -74,10 +74,11 @@ Yes, most settings support environment variables:
 ```bash
 OLLA_SERVER_PORT=8080
 OLLA_PROXY_ENGINE=olla
-OLLA_LOG_LEVEL=debug
+OLLA_LOGGING_LEVEL=debug
 ```
 
-However, some settings like `proxy.profile` must be set in the YAML configuration file.
+However, complex nested settings must stay in the YAML configuration file. See the configuration reference for the
+supported environment variable list.
 
 ## Troubleshooting
 

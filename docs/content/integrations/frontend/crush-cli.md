@@ -567,7 +567,7 @@ services:
       - ./olla.yaml:/app/config.yaml:ro
       - ./logs:/app/logs
     environment:
-      - OLLA_LOG_LEVEL=info
+      - OLLA_LOGGING_LEVEL=info
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:40114/internal/health"]
       interval: 30s

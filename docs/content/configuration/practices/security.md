@@ -24,7 +24,7 @@ This guide covers security considerations and best practices for deploying Olla 
 > - Request size limits prevent abuse
 > - No authentication built-in (use reverse proxy)
 > 
-> **Environment Variables**: `OLLA_SERVER_RATE_LIMITS_*`
+> **Environment Variables**: `OLLA_SERVER_GLOBAL_RATE_LIMIT`, `OLLA_SERVER_PER_IP_RATE_LIMIT`, `OLLA_SERVER_RATE_BURST_SIZE`, `OLLA_SERVER_HEALTH_RATE_LIMIT`
 
 ## Security Principles
 

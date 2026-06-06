@@ -29,7 +29,7 @@ However, you can also opt to use any OpenAI Compatible API as well (so you can u
 > [!NOTE]  
 > Olla runs in the container under `/app` so you will have to override within that folder.
 >
-> Eg. the `config.yaml` is in `/app/config.yaml`. Logs are available in `/app/logs/`.
+> Eg. the Docker image reads `config.yaml` from `/app/config/docker.yaml`. Logs are available in `/app/logs/`.
 
 1. **Edit `olla.yaml`** - Add your Ollama server URLs:
    ```yaml
@@ -64,7 +64,7 @@ This Docker Compose stack runs:
 - **Olla** - Proxy that load balances across your Ollama servers
 - **OpenWebUI** - Web interface that connects to Olla instead of directly to Ollama
 
-The `olla.yaml` file gets mounted to `/app/config.yaml` inside the Olla container.
+The `olla.yaml` file gets mounted to `/app/config/docker.yaml` inside the Olla container.
 
 ## Adding Ollama Instances
 

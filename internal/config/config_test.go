@@ -306,6 +306,78 @@ func TestEnvironmentVariableParsing(t *testing.T) {
 	}
 }
 
+func TestConfigReferenceDoesNotDocumentUnsupportedEnvVars(t *testing.T) {
+	data, err := os.ReadFile("../../docs/content/configuration/reference.md")
+	if err != nil {
+		t.Fatalf("read config reference: %v", err)
+	}
+
+	reference := string(data)
+	unsupportedClaims := []string{
+		"All configuration can be overridden via environment variables.",
+		"Pattern: `OLLA_<SECTION>_<KEY>`",
+	}
+	for _, claim := range unsupportedClaims {
+		if strings.Contains(reference, claim) {
+			t.Errorf("configuration reference still documents unsupported env override claim %q", claim)
+		}
+	}
+
+	const examplesStart = "Examples:\n\n```bash\n"
+	start := strings.Index(reference, examplesStart)
+	if start == -1 {
+		t.Fatal("configuration reference is missing environment variable examples block")
+	}
+	examples := reference[start+len(examplesStart):]
+	end := strings.Index(examples, "\n```")
+	if end == -1 {
+		t.Fatal("configuration reference environment variable examples block is not closed")
+	}
+	examples = examples[:end]
+
+	unsupportedExampleVars := []string{
+		"OLLA_SERVER_REQUEST_LOGGING",
+		"OLLA_SERVER_RATE_LIMITS_GLOBAL_REQUESTS_PER_MINUTE",
+		"OLLA_LOG_LEVEL",
+	}
+
+	for _, envVar := range unsupportedExampleVars {
+		if strings.Contains(examples, envVar) {
+			t.Errorf("configuration reference examples still document unsupported env override %q", envVar)
+		}
+	}
+}
+
+func TestLoadConfig_IgnoresUnsupportedEnvironmentVariables(t *testing.T) {
+	base := DefaultConfig()
+
+	oldEnvVars := map[string]string{
+		"OLLA_SERVER_REQUEST_LOGGING":                        "false",
+		"OLLA_SERVER_RATE_LIMITS_GLOBAL_REQUESTS_PER_MINUTE": "9999",
+		"OLLA_LOG_LEVEL":                                     "error",
+	}
+
+	for key, value := range oldEnvVars {
+		os.Setenv(key, value)
+		defer os.Unsetenv(key)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if loaded.Server.RequestLogging != base.Server.RequestLogging {
+		t.Errorf("RequestLogging changed from %t to %t via unsupported env var", base.Server.RequestLogging, loaded.Server.RequestLogging)
+	}
+	if loaded.Server.RateLimits.GlobalRequestsPerMinute != base.Server.RateLimits.GlobalRequestsPerMinute {
+		t.Errorf("GlobalRequestsPerMinute changed from %d to %d via unsupported env var", base.Server.RateLimits.GlobalRequestsPerMinute, loaded.Server.RateLimits.GlobalRequestsPerMinute)
+	}
+	if loaded.Logging.Level != base.Logging.Level {
+		t.Errorf("Logging level changed from %q to %q via unsupported env var", base.Logging.Level, loaded.Logging.Level)
+	}
+}
+
 func TestParseByteSize(t *testing.T) {
 	testCases := []struct {
 		input    string

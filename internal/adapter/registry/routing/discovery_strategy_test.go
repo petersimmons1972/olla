@@ -168,3 +168,30 @@ func TestDiscoveryStrategy_EmbeddingsNoCapableEndpoint(t *testing.T) {
 	assert.Equal(t, "rejected", string(decision.Action))
 	assert.Equal(t, constants.RoutingReasonNoCapableEndpoint, decision.Reason)
 }
+
+func TestDiscoveryStrategy_EmbeddingsNilEndpointDoesNotPanic(t *testing.T) {
+	ctx := context.WithValue(context.Background(), constants.ContextModelCapabilitiesKey, &domain.ModelCapabilities{
+		Embeddings: true,
+	})
+
+	strategy := &DiscoveryStrategy{
+		options: config.ModelRoutingStrategyOptions{
+			DiscoveryRefreshOnMiss: true,
+		},
+		logger: createTestLogger(),
+	}
+
+	assert.NotPanics(t, func() {
+		result, decision, err := strategy.GetRoutableEndpoints(
+			ctx,
+			"bge-m3-reembed",
+			[]*domain.Endpoint{nil},
+			nil,
+		)
+
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.NotNil(t, decision)
+		assert.Equal(t, constants.RoutingReasonNoCapableEndpoint, decision.Reason)
+	})
+}

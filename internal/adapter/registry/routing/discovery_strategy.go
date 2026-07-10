@@ -297,6 +297,9 @@ func filterEndpointsByCapability(endpoints []*domain.Endpoint, capability string
 
 	filtered := make([]*domain.Endpoint, 0, len(endpoints))
 	for _, endpoint := range endpoints {
+		if endpoint == nil {
+			continue
+		}
 		for _, ecap := range endpoint.Capabilities {
 			if strings.EqualFold(ecap, capability) {
 				filtered = append(filtered, endpoint)

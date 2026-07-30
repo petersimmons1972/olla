@@ -22,6 +22,10 @@ on:
       - '.dockerignore'
       - '**/*.txt'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   GO_VERSION: 1.24.x
   GOLANGCILINT_VERSION: "2.11.4"
@@ -34,6 +38,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       matrix:
         go-version: ['1.24']
@@ -84,6 +89,7 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Configure Go
         uses: actions/setup-go@v6
@@ -116,6 +122,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -153,3 +160,18 @@ jobs:
             ./bin/olla --version
           fi
         shell: bash
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Scan for secrets (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
